@@ -858,11 +858,11 @@ if 'day_override' not in st.session_state:
     st.session_state['day_override'] = 1
 
 # --- 4. SIDEBAR CONTROLS ---
-with st.sidebar.expander("Conditions", expanded=False):
+with st.sidebar.expander("Conditions", expanded=True):
     rc_pyr = st.slider("Pyramid Lake", 0.0, 5.0, 3.5, 0.5)
-    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 2.0, 0.5)
-    rc_ore = st.slider("Oregon Coast", 0.0, 5.0, 4.0, 0.5)
-    rc_op = st.slider("Olympic Peninsula", 0.0, 5.0, 2.0, 0.5)
+    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 3.5, 0.5)
+    rc_ore = st.slider("Oregon Coast", 0.0, 5.0, 2, 0.5)
+    rc_op = st.slider("Olympic Peninsula", 0.0, 2, 2.0, 0.5)
 ratings = {"Pyramid": rc_pyr, "NorCal": rc_norcal, "Oregon": rc_ore, "OP": rc_op}
 
 with st.sidebar.expander("Other Variables", expanded=False):
@@ -1153,4 +1153,5 @@ if st.button("🔄 Refresh Live Data"):
                         delta=r['Target'],
                         delta_color=color
                     )
+
                     st.caption(r['Note'])
