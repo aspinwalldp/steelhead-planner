@@ -4,7 +4,6 @@ import io
 import datetime
 import requests
 from datetime import timedelta
-import re
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Steelhead Expedition Command Center", layout="wide", page_icon="🎣")
@@ -92,9 +91,10 @@ Rawlins,RETURN: Rawlins -> Home,Home,1,370,7.0,N/A,0
 SLC_Area,RETURN: Final Leg (SLC -> Home),Home,1,450,7.0,N/A,0
 SLC_Area,DRIVE: SLC -> Bend (OR),Bend,1,600,9.5,N/A,2
 SLC_Area,DRIVE: SLC -> Pendleton (OR),Pendleton,1,500,7.5,N/A,2
+Elko,DRIVE: Elko -> Pepperwood (Long),Pepperwood,1,530,9.0,RC_NorCal,2
+Elko,RETURN: Final Leg (SLC -> Home),Home,1,670,11.0,N/A,0
 Any,RETURN: Begin Return Leg,SLC_Area,1,750,11.0,N/A,1
 Any,BAIL: Return Home (Standard),Home,2,750,11.0,N/A,0
-Elko,RETURN: Final Leg (SLC -> Home),Home,1,670,11.0,N/A,0
 Eureka,BAIL: Eureka -> Elko,Elko,1,530,9.0,N/A,2
 Home,TRIP COMPLETE,Home,0,0,0,N/A,0
 Brookings,RETURN: Begin Return Leg,SLC_Area,1,750,11.0,N/A,1
@@ -102,6 +102,7 @@ Brookings,MOVE & FISH: Brookings -> Hiouchi (Reverse),Hiouchi,1,25,0.5,RC_NorCal
 Hiouchi,MOVE & FISH: Hiouchi -> Pepperwood (Reverse),Pepperwood,1,90,1.5,RC_NorCal,2
 """
 
+# Itinerary: Fixed Reverse Routes (No 3-Day Jumps)
 ITINERARY_CSV_RAW = """Option,Day,Activity
 A,1,START: Drive to Drum Mtns (UT)
 A,2,DRIVE: Drum Mtns -> Pyramid
@@ -427,7 +428,7 @@ A_r,14,MOVE & FISH: Eagle -> Pyramid (Reverse)
 A_r,15,FISH: Pyramid (Full Day)
 A_r,16,FISH: Pyramid (Full Day)
 A_r,17,RETURN: Drum Mtns -> Home
-B_r,1,START: Drive to Forks WA (Long Haul)
+B_r,1,START: Drive to SLC (UT)
 B_r,2,DRIVE: SLC -> Pendleton (OR)
 B_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 B_r,4,FISH: OP (Forks)
@@ -445,7 +446,7 @@ B_r,15,FISH: Pyramid (Full Day)
 B_r,16,FISH: Pyramid (Full Day)
 B_r,17,FISH: Pyramid (Full Day)
 B_r,18,RETURN: Drum Mtns -> Home
-C_r,1,START: Drive to Forks WA (Long Haul)
+C_r,1,START: Drive to SLC (UT)
 C_r,2,DRIVE: SLC -> Pendleton (OR)
 C_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 C_r,4,FISH: OP (Forks)
@@ -462,7 +463,7 @@ C_r,14,FISH: Eel River (Pepperwood)
 C_r,15,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 C_r,16,MOVE & FISH: Eagle -> Pyramid (Reverse)
 C_r,17,RETURN: Drum Mtns -> Home
-D_r,1,START: Drive to Forks WA (Long Haul)
+D_r,1,START: Drive to SLC (UT)
 D_r,2,DRIVE: SLC -> Pendleton (OR)
 D_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 D_r,4,FISH: OP (Forks)
@@ -512,7 +513,7 @@ F_r,14,FISH: Pyramid (Full Day)
 F_r,15,FISH: Pyramid (Full Day)
 F_r,16,RETURN: Drum Mtns -> Home
 F_r,17,TRIP COMPLETE
-G_r,1,START: Drive to Forks WA (Long Haul)
+G_r,1,START: Drive to SLC (UT)
 G_r,2,DRIVE: SLC -> Pendleton (OR)
 G_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 G_r,4,FISH: OP (Forks)
@@ -528,7 +529,7 @@ G_r,13,FISH: Pyramid (Full Day)
 G_r,14,FISH: Pyramid (Full Day)
 G_r,15,FISH: Pyramid (Full Day)
 G_r,16,RETURN: Drum Mtns -> Home
-H_r,1,START: Drive to Forks WA (Long Haul)
+H_r,1,START: Drive to SLC (UT)
 H_r,2,DRIVE: SLC -> Pendleton (OR)
 H_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 H_r,4,FISH: OP (Forks)
@@ -578,7 +579,7 @@ J_r,14,FISH: Pyramid (Full Day)
 J_r,15,FISH: Pyramid (Full Day)
 J_r,16,FISH: Pyramid (Full Day)
 J_r,17,RETURN: Drum Mtns -> Home
-K_r,1,START: Drive to Forks WA (Long Haul)
+K_r,1,START: Drive to SLC (UT)
 K_r,2,DRIVE: SLC -> Pendleton (OR)
 K_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 K_r,4,FISH: OP (Forks)
@@ -594,7 +595,7 @@ K_r,13,FISH: Pyramid (Full Day)
 K_r,14,FISH: Pyramid (Full Day)
 K_r,15,FISH: Pyramid (Full Day)
 K_r,16,RETURN: Drum Mtns -> Home
-L_r,1,START: Drive to Forks WA (Long Haul)
+L_r,1,START: Drive to SLC (UT)
 L_r,2,DRIVE: SLC -> Pendleton (OR)
 L_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 L_r,4,FISH: OP (Forks)
@@ -690,7 +691,7 @@ Q_r,14,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 Q_r,15,MOVE & FISH: Eagle -> Pyramid (Reverse)
 Q_r,16,DRIVE: Drum Mtns -> Pyramid
 Q_r,17,RETURN: Drum Mtns -> Home
-R_r,1,START: Drive to Forks WA (Long Haul)
+R_r,1,START: Drive to SLC (UT)
 R_r,2,DRIVE: SLC -> Pendleton (OR)
 R_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 R_r,4,FISH: OP (Forks)
@@ -804,28 +805,47 @@ def get_nws_forecast_data(lat, lon):
         return None
 
 @st.cache_data(ttl=600) 
-def get_usgs_simple(site_id, param_code='00060'):
-    """Fetch current value. No trend."""
+def get_usgs_trend(site_id, param_code='00060'):
+    """
+    Fetches current value. NO TREND.
+    Widened window (P2D) to handle lagging gauges like Chetco/Queets/N.Umpqua.
+    """
     try:
-        url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=PT2H"
+        # Fetch last 48 hours (P2D) to ensure data even if lagging
+        url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=P2D"
         r = requests.get(url).json()
         ts_data = r['value']['timeSeries'][0]['values'][0]['value']
-        if not ts_data: return None
-        return float(ts_data[-1]['value'])
+        
+        if not ts_data: return None, ""
+        
+        # Just get the last value
+        current_val = float(ts_data[-1]['value'])
+        return current_val, "" 
     except:
-        return None
+        return None, ""
 
 def get_cdec_live(site_id, sensor):
-    """Scrapes CDEC."""
+    """
+    Scrapes CDEC CSV. Robust to column shifts.
+    """
+    # Try Event then Hourly
     for dur in ['E', 'H']:
         try:
             url = f"https://cdec.water.ca.gov/dynamicapp/QueryCSV?Station_id={site_id}&Sensor_ids={sensor}&dur={dur}"
             df = pd.read_csv(url, header=None)
             if not df.empty:
-                if "STATION" in str(df.iloc[0][0]): continue 
-                for val in reversed(df.iloc[-1]):
-                    try: return float(val)
-                    except: continue
+                # Check if first cell is error message
+                if "STATION" in str(df.iloc[0][0]): continue
+                
+                # Value is usually in last column or col 2
+                # We'll take the last valid column
+                last_row = df.iloc[-1]
+                # Find the first float from right to left
+                for val in reversed(last_row):
+                    try:
+                        return float(val)
+                    except:
+                        continue
         except:
             continue
     return None
@@ -1107,7 +1127,7 @@ if st.button("🔄 Refresh Live Data"):
         
         REGIONS = {
             "NorCal": [
-                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Source": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
+                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
                 {"Name": "Eel R a Scotia", "ID": "11477000", "Source": "USGS", "Target": "1500-4500 cfs", "P": "00060", "Note": "Takes forever to clear. Check Turbidity."},
                 {"Name": "SF Eel nr Miranda", "ID": "11476500", "Source": "USGS", "Target": "300-1800 cfs", "P": "00060", "Note": "Clears much faster than the main stem."},
                 {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Source": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."}
@@ -1133,15 +1153,11 @@ if st.button("🔄 Refresh Live Data"):
             g_cols = st.columns(4)
             for i, r in enumerate(river_list):
                 with g_cols[i % 4]:
-                    val = get_usgs_simple(r['ID'], r['P'])
+                    val, trend = get_usgs_trend(r['ID'], r['P']) if r['Type'] == "USGS" else get_cdec_live(r['ID'], r['P'])
                     
-                    # Turbidity for CDEC
+                    # Turbidity for CDEC (NorCal Only)
                     turb = None
-                    if region == "NorCal":
-                         cdec_id = "SCO" if "Scotia" in r['Name'] else ("SFM" if "Miranda" in r['Name'] else ("BRG" if "Van" in r['Name'] else None))
-                         if cdec_id:
-                            t_val = get_cdec_live(cdec_id, 27)
-                            if t_val: turb = t_val
+                    # (Turbidity Removed per instruction)
 
                     # Color Logic
                     color = "off"
@@ -1164,7 +1180,8 @@ if st.button("🔄 Refresh Live Data"):
                     except: pass
 
                     unit = "ft" if "ft" in r['Target'] else "cfs"
-                    url = f"https://waterdata.usgs.gov/nwis/uv?site_no={r['ID']}"
+                    # Link Name
+                    url = f"https://waterdata.usgs.gov/nwis/uv?site_no={r['ID']}" if r['Type'] == "USGS" else f"https://cdec.water.ca.gov/dynamicapp/QueryF?s={r['ID']}"
                     st.markdown(f"[{r['Name']}]({url})")
                     
                     st.metric(
@@ -1174,5 +1191,4 @@ if st.button("🔄 Refresh Live Data"):
                         delta_color=color
                     )
                     note_text = r['Note']
-                    if turb: note_text += f" | 💧 {turb} FNU (Ideal 0-15)"
                     st.caption(note_text)
