@@ -8,7 +8,7 @@ from datetime import timedelta
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Steelhead Expedition Command Center", layout="wide", page_icon="🎣")
 
-# --- 1. DATA LOADING ---
+# --- 1. DATA LOADING (The 1-Day Segment Version) ---
 BUILDER_DB_CSV = """Current_Loc,Action_Label,New_Loc,Days_Used,Miles,Drive_Hrs,River_Region,Days_To_Return
 Start,START: Drive to Drum Mtns (UT),Drum Mtns,1,470,7.5,N/A,2
 Start,START: Drive to SLC (UT),SLC_Area,1,470,7.5,N/A,2
@@ -427,7 +427,7 @@ A_r,14,MOVE & FISH: Eagle -> Pyramid (Reverse)
 A_r,15,FISH: Pyramid (Full Day)
 A_r,16,FISH: Pyramid (Full Day)
 A_r,17,RETURN: Drum Mtns -> Home
-B_r,1,START: Drive to Forks WA (Long Haul)
+B_r,1,START: Drive to SLC (UT)
 B_r,2,DRIVE: SLC -> Pendleton (OR)
 B_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 B_r,4,FISH: OP (Forks)
@@ -445,7 +445,7 @@ B_r,15,FISH: Pyramid (Full Day)
 B_r,16,FISH: Pyramid (Full Day)
 B_r,17,FISH: Pyramid (Full Day)
 B_r,18,RETURN: Drum Mtns -> Home
-C_r,1,START: Drive to Forks WA (Long Haul)
+C_r,1,START: Drive to SLC (UT)
 C_r,2,DRIVE: SLC -> Pendleton (OR)
 C_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 C_r,4,FISH: OP (Forks)
@@ -462,7 +462,7 @@ C_r,14,FISH: Eel River (Pepperwood)
 C_r,15,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 C_r,16,MOVE & FISH: Eagle -> Pyramid (Reverse)
 C_r,17,RETURN: Drum Mtns -> Home
-D_r,1,START: Drive to Forks WA (Long Haul)
+D_r,1,START: Drive to SLC (UT)
 D_r,2,DRIVE: SLC -> Pendleton (OR)
 D_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 D_r,4,FISH: OP (Forks)
@@ -512,7 +512,7 @@ F_r,14,FISH: Pyramid (Full Day)
 F_r,15,FISH: Pyramid (Full Day)
 F_r,16,RETURN: Drum Mtns -> Home
 F_r,17,TRIP COMPLETE
-G_r,1,START: Drive to Forks WA (Long Haul)
+G_r,1,START: Drive to SLC (UT)
 G_r,2,DRIVE: SLC -> Pendleton (OR)
 G_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 G_r,4,FISH: OP (Forks)
@@ -528,7 +528,7 @@ G_r,13,FISH: Pyramid (Full Day)
 G_r,14,FISH: Pyramid (Full Day)
 G_r,15,FISH: Pyramid (Full Day)
 G_r,16,RETURN: Drum Mtns -> Home
-H_r,1,START: Drive to Forks WA (Long Haul)
+H_r,1,START: Drive to SLC (UT)
 H_r,2,DRIVE: SLC -> Pendleton (OR)
 H_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 H_r,4,FISH: OP (Forks)
@@ -578,7 +578,7 @@ J_r,14,FISH: Pyramid (Full Day)
 J_r,15,FISH: Pyramid (Full Day)
 J_r,16,FISH: Pyramid (Full Day)
 J_r,17,RETURN: Drum Mtns -> Home
-K_r,1,START: Drive to Forks WA (Long Haul)
+K_r,1,START: Drive to SLC (UT)
 K_r,2,DRIVE: SLC -> Pendleton (OR)
 K_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 K_r,4,FISH: OP (Forks)
@@ -594,7 +594,7 @@ K_r,13,FISH: Pyramid (Full Day)
 K_r,14,FISH: Pyramid (Full Day)
 K_r,15,FISH: Pyramid (Full Day)
 K_r,16,RETURN: Drum Mtns -> Home
-L_r,1,START: Drive to Forks WA (Long Haul)
+L_r,1,START: Drive to SLC (UT)
 L_r,2,DRIVE: SLC -> Pendleton (OR)
 L_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 L_r,4,FISH: OP (Forks)
@@ -690,7 +690,7 @@ Q_r,14,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 Q_r,15,MOVE & FISH: Eagle -> Pyramid (Reverse)
 Q_r,16,DRIVE: Drum Mtns -> Pyramid
 Q_r,17,RETURN: Drum Mtns -> Home
-R_r,1,START: Drive to Forks WA (Long Haul)
+R_r,1,START: Drive to SLC (UT)
 R_r,2,DRIVE: SLC -> Pendleton (OR)
 R_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 R_r,4,FISH: OP (Forks)
@@ -804,25 +804,37 @@ def get_nws_forecast_data(lat, lon):
         return None
 
 @st.cache_data(ttl=600) 
-def get_usgs_simple(site_id, param_code='00060'):
-    """Fetch current value. Widen search for lags."""
+def get_usgs_trend(site_id, param_code='00060'):
+    """
+    Fetches current value. 
+    Trend REMOVED per user instruction. 
+    Widened window (P2D) to handle lagging gauges like Chetco/Queets/N.Umpqua.
+    """
     try:
-        # Period = P2D (2 days) to find last value even if lagging
+        # Fetch last 48 hours (P2D) to ensure data even if lagging
         url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=P2D"
         r = requests.get(url).json()
         ts_data = r['value']['timeSeries'][0]['values'][0]['value']
-        if not ts_data: return None
-        return float(ts_data[-1]['value'])
+        
+        if not ts_data: return None, ""
+        
+        # Just get the last value
+        current_val = float(ts_data[-1]['value'])
+        return current_val, "" 
     except:
-        return None
+        return None, ""
 
 def get_cdec_live(site_id, sensor):
-    """Scrapes CDEC CSV."""
+    """
+    Scrapes CDEC CSV. Robust to column shifts.
+    """
+    # Try Event then Hourly
     for dur in ['E', 'H']:
         try:
             url = f"https://cdec.water.ca.gov/dynamicapp/QueryCSV?Station_id={site_id}&Sensor_ids={sensor}&dur={dur}"
             df = pd.read_csv(url, header=None)
             if not df.empty:
+                # Check if first cell is error message
                 if "STATION" in str(df.iloc[0][0]): continue 
                 for val in reversed(df.iloc[-1]):
                     try: return float(val)
@@ -873,8 +885,8 @@ if 'day_override' not in st.session_state:
 
 # --- 4. SIDEBAR CONTROLS ---
 with st.sidebar.expander("Conditions", expanded=False):
-    rc_pyr = st.slider("Pyramid Lake", 0.0, 5.0, 2.5, 0.5)
-    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 2.5, 0.5)
+    rc_pyr = st.slider("Pyramid Lake", 0.0, 5.0, 3.5, 0.5)
+    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 3.5, 0.5)
     rc_ore = st.slider("Oregon Coast", 0.0, 5.0, 2.0, 0.5)
     rc_op = st.slider("Olympic Peninsula", 0.0, 5.0, 2.0, 0.5)
 ratings = {"Pyramid": rc_pyr, "NorCal": rc_norcal, "Oregon": rc_ore, "OP": rc_op}
@@ -965,11 +977,11 @@ winner = df_rank.iloc[0]
 st.info(f"**Current Winner:** Option {winner['Option']} - {winner['Summary']}")
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Pyramid Days", winner['Pyramid'])
-c2.metric("Eagle Days", winner['Eagle'])
-c3.metric("NorCal Days", winner['NorCal'])
-c4.metric("Oregon Days", winner['Oregon'])
-c5.metric("OP Days", winner['OP'])
+c1.metric("Pyramid", winner['Pyramid'])
+c2.metric("Eagle", winner['Eagle'])
+c3.metric("NorCal", winner['NorCal'])
+c4.metric("Oregon", winner['Oregon'])
+c5.metric("OP", winner['OP'])
 
 c_a, c_b, c_c, c_d = st.columns(4)
 c_a.metric("Total Fish Days", winner['Fish Days'])
@@ -1134,11 +1146,15 @@ if st.button("🔄 Refresh Live Data"):
             g_cols = st.columns(4)
             for i, r in enumerate(river_list):
                 with g_cols[i % 4]:
-                    val = get_usgs_simple(r['ID'], r['P'])
+                    val, trend = get_usgs_trend(r['ID'], r['P']) if r['Type'] == "USGS" else get_cdec_live(r['ID'], r['P'])
                     
                     # Turbidity for CDEC
                     turb = None
-                    # (Turbidity Removed)
+                    if region == "NorCal":
+                         cdec_id = "SCO" if "Scotia" in r['Name'] else ("SFM" if "Miranda" in r['Name'] else ("BRG" if "Van" in r['Name'] else None))
+                         if cdec_id:
+                            t_val = get_cdec_live(cdec_id, 27)
+                            if t_val: turb = t_val
 
                     # Color Logic
                     color = "off"
@@ -1150,7 +1166,7 @@ if st.button("🔄 Refresh Live Data"):
                         
                         if val:
                             if val < t_min:
-                                color = "off" # Yellow
+                                color = "off" # Yellow/Grey
                                 status_icon = "🟡 LOW"
                             elif val > t_max:
                                 color = "inverse" # Red
@@ -1172,4 +1188,5 @@ if st.button("🔄 Refresh Live Data"):
                         delta_color=color
                     )
                     note_text = r['Note']
+                    if turb: note_text += f" | 💧 {turb} FNU (Ideal 0-15)"
                     st.caption(note_text)
