@@ -4,20 +4,14 @@ import io
 import datetime
 import requests
 from datetime import timedelta
-import re
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Steelhead Expedition Command Center", layout="wide", page_icon="🎣")
 
 # --- 1. DATA LOADING ---
-# Database: Standardized to "Coos Bay" (No Reedsport). Added missing links.
 BUILDER_DB_CSV = """Current_Loc,Action_Label,New_Loc,Days_Used,Miles,Drive_Hrs,River_Region,Days_To_Return
 Start,START: Drive to Drum Mtns (UT),Drum Mtns,1,470,7.5,N/A,2
 Start,START: Drive to SLC (UT),SLC_Area,1,470,7.5,N/A,2
-Start,START: Drive to Brookings OR,Brookings,2,750,11.0,RC_Oregon,2
-Start,START: Drive to Forks WA (Long Haul),Forks,3,1000,24.0,N/A,3
-Start,START: Drive to Eureka/Pepperwood,Pepperwood,2,800,12.0,RC_NorCal,2
-Start,START: Drive to Elko (NV),Elko,1,670,10.5,N/A,2
 Drum Mtns,DRIVE: Drum Mtns -> Pyramid,Pyramid,1,420,6.5,RC_Pyramid,2
 Drum Mtns,RETURN: Drum Mtns -> Home,Home,1,470,7.5,N/A,0
 Pyramid,FISH: Pyramid (Full Day),Pyramid,1,0,0,RC_Pyramid,2
@@ -105,7 +99,7 @@ Brookings,MOVE & FISH: Brookings -> Hiouchi (Reverse),Hiouchi,1,25,0.5,RC_NorCal
 Hiouchi,MOVE & FISH: Hiouchi -> Pepperwood (Reverse),Pepperwood,1,90,1.5,RC_NorCal,2
 """
 
-# Itinerary: Updated Reedsport -> Coos Bay to match DB
+# Itinerary: Fixed Reverse Routes (1-Day Segments)
 ITINERARY_CSV_RAW = """Option,Day,Activity
 A,1,START: Drive to Drum Mtns (UT)
 A,2,DRIVE: Drum Mtns -> Pyramid
@@ -431,7 +425,7 @@ A_r,14,MOVE & FISH: Eagle -> Pyramid (Reverse)
 A_r,15,FISH: Pyramid (Full Day)
 A_r,16,FISH: Pyramid (Full Day)
 A_r,17,RETURN: Drum Mtns -> Home
-B_r,1,START: Drive to Forks WA (Long Haul)
+B_r,1,START: Drive to SLC (UT)
 B_r,2,DRIVE: SLC -> Pendleton (OR)
 B_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 B_r,4,FISH: OP (Forks)
@@ -449,14 +443,14 @@ B_r,15,FISH: Pyramid (Full Day)
 B_r,16,FISH: Pyramid (Full Day)
 B_r,17,FISH: Pyramid (Full Day)
 B_r,18,RETURN: Drum Mtns -> Home
-C_r,1,START: Drive to Forks WA (Long Haul)
+C_r,1,START: Drive to SLC (UT)
 C_r,2,DRIVE: SLC -> Pendleton (OR)
 C_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 C_r,4,FISH: OP (Forks)
 C_r,5,FISH: OP (Forks)
 C_r,6,FISH: OP (Forks)
-C_r,7,DRIVE: Forks -> Coos Bay (Long/Rev)
-C_r,8,MOVE & FISH: Coos Bay -> Brookings (Reverse)
+C_r,7,DRIVE: Forks -> Reedsport (Long/Rev)
+C_r,8,MOVE & FISH: Reedsport -> Brookings (Reverse)
 C_r,9,FISH: Chetco River (Brookings)
 C_r,10,FISH: Chetco River (Brookings)
 C_r,11,MOVE & FISH: Brookings -> Hiouchi (Reverse)
@@ -466,13 +460,13 @@ C_r,14,FISH: Eel River (Pepperwood)
 C_r,15,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 C_r,16,MOVE & FISH: Eagle -> Pyramid (Reverse)
 C_r,17,RETURN: Drum Mtns -> Home
-D_r,1,START: Drive to Forks WA (Long Haul)
+D_r,1,START: Drive to SLC (UT)
 D_r,2,DRIVE: SLC -> Pendleton (OR)
 D_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 D_r,4,FISH: OP (Forks)
 D_r,5,FISH: OP (Forks)
-D_r,6,DRIVE: Forks -> Coos Bay (Long/Rev)
-D_r,7,MOVE & FISH: Coos Bay -> Brookings (Reverse)
+D_r,6,DRIVE: Forks -> Reedsport (Long/Rev)
+D_r,7,MOVE & FISH: Reedsport -> Brookings (Reverse)
 D_r,8,FISH: Chetco River (Brookings)
 D_r,9,FISH: Chetco River (Brookings)
 D_r,10,MOVE & FISH: Brookings -> Hiouchi (Reverse)
@@ -516,7 +510,7 @@ F_r,14,FISH: Pyramid (Full Day)
 F_r,15,FISH: Pyramid (Full Day)
 F_r,16,RETURN: Drum Mtns -> Home
 F_r,17,TRIP COMPLETE
-G_r,1,START: Drive to Forks WA (Long Haul)
+G_r,1,START: Drive to SLC (UT)
 G_r,2,DRIVE: SLC -> Pendleton (OR)
 G_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 G_r,4,FISH: OP (Forks)
@@ -532,7 +526,7 @@ G_r,13,FISH: Pyramid (Full Day)
 G_r,14,FISH: Pyramid (Full Day)
 G_r,15,FISH: Pyramid (Full Day)
 G_r,16,RETURN: Drum Mtns -> Home
-H_r,1,START: Drive to Forks WA (Long Haul)
+H_r,1,START: Drive to SLC (UT)
 H_r,2,DRIVE: SLC -> Pendleton (OR)
 H_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 H_r,4,FISH: OP (Forks)
@@ -582,7 +576,7 @@ J_r,14,FISH: Pyramid (Full Day)
 J_r,15,FISH: Pyramid (Full Day)
 J_r,16,FISH: Pyramid (Full Day)
 J_r,17,RETURN: Drum Mtns -> Home
-K_r,1,START: Drive to Forks WA (Long Haul)
+K_r,1,START: Drive to SLC (UT)
 K_r,2,DRIVE: SLC -> Pendleton (OR)
 K_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 K_r,4,FISH: OP (Forks)
@@ -598,7 +592,7 @@ K_r,13,FISH: Pyramid (Full Day)
 K_r,14,FISH: Pyramid (Full Day)
 K_r,15,FISH: Pyramid (Full Day)
 K_r,16,RETURN: Drum Mtns -> Home
-L_r,1,START: Drive to Forks WA (Long Haul)
+L_r,1,START: Drive to SLC (UT)
 L_r,2,DRIVE: SLC -> Pendleton (OR)
 L_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 L_r,4,FISH: OP (Forks)
@@ -694,7 +688,7 @@ Q_r,14,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 Q_r,15,MOVE & FISH: Eagle -> Pyramid (Reverse)
 Q_r,16,DRIVE: Drum Mtns -> Pyramid
 Q_r,17,RETURN: Drum Mtns -> Home
-R_r,1,START: Drive to Forks WA (Long Haul)
+R_r,1,START: Drive to SLC (UT)
 R_r,2,DRIVE: SLC -> Pendleton (OR)
 R_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 R_r,4,FISH: OP (Forks)
@@ -741,6 +735,9 @@ def get_next_best_move(current_loc, ratings, days_remaining):
     }
     needed = return_days_map.get(current_loc, 1)
     
+    # Stop if we are at Home
+    if current_loc == "Home": return "TRIP COMPLETE"
+
     if days_remaining <= needed:
         if current_loc == "Forks": return "RETURN: Forks -> Boise ID"
         if current_loc == "Brookings": return "BAIL: Brookings -> SLC"
@@ -818,21 +815,6 @@ def get_usgs_simple(site_id, param_code='00060'):
         return float(ts_data[-1]['value'])
     except:
         return None
-
-def get_cdec_live(site_id, sensor):
-    """Scrapes CDEC."""
-    for dur in ['E', 'H']:
-        try:
-            url = f"https://cdec.water.ca.gov/dynamicapp/QueryCSV?Station_id={site_id}&Sensor_ids={sensor}&dur={dur}"
-            df = pd.read_csv(url, header=None)
-            if not df.empty:
-                if "STATION" in str(df.iloc[0][0]): continue 
-                for val in reversed(df.iloc[-1]):
-                    try: return float(val)
-                    except: continue
-        except:
-            continue
-    return None
 
 # --- 3. MAIN APP LOGIC ---
 try:
@@ -1007,7 +989,10 @@ with st.expander("🛠️ Live Reroute / Manual Override", expanded=False):
     all_locs = sorted(df_db['Current_Loc'].unique())
     ovr_loc = c_loc.selectbox("Current Location", ["(On Plan)"] + all_locs)
     
-    if ovr_loc != "(On Plan)":
+    # Fixed Logic: Explicitly clear override if (On Plan) is selected
+    if ovr_loc == "(On Plan)":
+        st.session_state['current_location_override'] = None
+    else:
         st.session_state['current_location_override'] = ovr_loc
         st.session_state['day_override'] = ovr_day
         st.warning(f"Rerouting from Day {ovr_day} at {ovr_loc}...")
@@ -1111,10 +1096,10 @@ if st.button("🔄 Refresh Live Data"):
         
         REGIONS = {
             "NorCal": [
+                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
                 {"Name": "Eel R a Scotia", "ID": "11477000", "Type": "USGS", "Target": "1500-4500 cfs", "P": "00060", "Note": "Takes forever to clear. Check Turbidity."},
                 {"Name": "SF Eel nr Miranda", "ID": "11476500", "Type": "USGS", "Target": "300-1800 cfs", "P": "00060", "Note": "Clears much faster than the main stem."},
-                {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Type": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."},
-                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."}
+                {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Type": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."}
             ],
             "Oregon": [
                 {"Name": "Chetco R nr Brookings", "ID": "14400000", "Type": "USGS", "Target": "1200-4000 cfs", "P": "00060", "Note": "2,000 is magic. > 4,000 is tough wading."},
@@ -1139,14 +1124,6 @@ if st.button("🔄 Refresh Live Data"):
                 with g_cols[i % 4]:
                     val = get_usgs_simple(r['ID'], r['P'])
                     
-                    # Turbidity for CDEC
-                    turb = None
-                    if region == "NorCal":
-                         cdec_id = "SCO" if "Scotia" in r['Name'] else ("SFM" if "Miranda" in r['Name'] else ("BRG" if "Van" in r['Name'] else None))
-                         if cdec_id:
-                            t_val = get_cdec_live(cdec_id, 27)
-                            if t_val: turb = t_val
-
                     # Color Logic
                     color = "off"
                     status_icon = ""
@@ -1178,6 +1155,4 @@ if st.button("🔄 Refresh Live Data"):
                         delta=r['Target'],
                         delta_color=color
                     )
-                    note_text = r['Note']
-                    if turb: note_text += f" | 💧 {turb} FNU (Ideal 0-15)"
-                    st.caption(note_text)
+                    st.caption(r['Note'])
