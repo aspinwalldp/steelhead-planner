@@ -1094,24 +1094,24 @@ if st.button("🔄 Refresh Live Data"):
         
         REGIONS = {
             "NorCal": [
-                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
                 {"Name": "Eel R a Scotia", "ID": "11477000", "Type": "USGS", "Target": "1500-4500 cfs", "P": "00060", "Note": "Takes forever to clear. Check Turbidity."},
                 {"Name": "SF Eel nr Miranda", "ID": "11476500", "Type": "USGS", "Target": "300-1800 cfs", "P": "00060", "Note": "Clears much faster than the main stem."},
                 {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Type": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."}
+  		{"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
             ],
             "Oregon": [
                 {"Name": "Chetco R nr Brookings", "ID": "14400000", "Type": "USGS", "Target": "1200-4000 cfs", "P": "00060", "Note": "2,000 is magic. > 4,000 is tough wading."},
+  		{"Name": "Rogue R nr Agness", "ID": "14372300", "Type": "USGS", "Target": "2000-6000 cfs", "P": "00060", "Note": "Big water. Safe bet when small streams blow out."},
                 {"Name": "Elk R abv Hatchery", "ID": "14338000", "Type": "USGS", "Target": "3.5-5.5 ft", "P": "00065", "Note": "Tiny system. Clears in 24 hours."},
-                {"Name": "Sixes R at Hwy 101", "ID": "14327150", "Type": "USGS", "Target": "4.0-7.0 ft", "P": "00065", "Note": "Dark tannin water. Fishable higher than you think."},
-                {"Name": "Rogue R nr Agness", "ID": "14372300", "Type": "USGS", "Target": "2000-6000 cfs", "P": "00060", "Note": "Big water. Safe bet when small streams blow out."},
+                {"Name": "Sixes R at Hwy 101", "ID": "14327150", "Type": "USGS", "Target": "4.0-7.0 ft", "P": "00065", "Note": "Dark tannin water. Fishable higher than you think."},            
                 {"Name": "N Umpqua a Winchester", "ID": "14319500", "Type": "USGS", "Target": "1500-4000 cfs", "P": "00060", "Note": "The famous \"Fly Only\" water is upstream."},
                 {"Name": "Umpqua R nr Elkton", "ID": "14321000", "Type": "USGS", "Target": "4000-10000 cfs", "P": "00060", "Note": "Big water swinging."}
             ],
             "OP": [
-                {"Name": "Bogachiel R nr La Push", "ID": "12043000", "Type": "USGS", "Target": "500-2500 cfs", "P": "00060", "Note": "The local favorite. Gets crowded."},
+                {"Name": "Queets R nr Clearwater", "ID": "12040500", "Type": "USGS", "Target": "2000-7000 cfs", "P": "00060", "Note": "Wild, remote, big water."}	
                 {"Name": "Calawah R nr Forks", "ID": "12043300", "Type": "USGS", "Target": "300-1500 cfs", "P": "00060", "Note": "Steep and fast. Clears quickly."},
                 {"Name": "Hoh R at US 101", "ID": "12041200", "Type": "USGS", "Target": "1000-4000 cfs", "P": "00060", "Note": "Glacial grey color is normal (\"Hoh Grey\")."},
-                {"Name": "Queets R nr Clearwater", "ID": "12040500", "Type": "USGS", "Target": "2000-7000 cfs", "P": "00060", "Note": "Wild, remote, big water."}
+		{"Name": "Bogachiel R nr La Push", "ID": "12043000", "Type": "USGS", "Target": "500-2500 cfs", "P": "00060", "Note": "The local favorite. Gets crowded."},
             ]
         }
         
