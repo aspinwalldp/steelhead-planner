@@ -102,6 +102,7 @@ Brookings,MOVE & FISH: Brookings -> Hiouchi (Reverse),Hiouchi,1,25,0.5,RC_NorCal
 Hiouchi,MOVE & FISH: Hiouchi -> Pepperwood (Reverse),Pepperwood,1,90,1.5,RC_NorCal,2
 """
 
+# (Same Itinerary CSV as before)
 ITINERARY_CSV_RAW = """Option,Day,Activity
 A,1,START: Drive to Drum Mtns (UT)
 A,2,DRIVE: Drum Mtns -> Pyramid
@@ -723,29 +724,24 @@ S_r,14,FISH: Pyramid (Full Day)
 S_r,15,FISH: Pyramid (Full Day)
 S_r,16,RETURN: Drum Mtns -> Home"""
 
-def get_next_best_move(current_loc, ratings, days_remaining):
-    """Auto-pilot logic with full node coverage."""
+def get_next_best_move(current_loc, ratings, days_remaining, is_reverse=False):
+    """Auto-pilot logic based on river ratings and DIRECTION."""
     r_pyr = ratings['Pyramid']
     r_norcal = ratings['NorCal']
     r_ore = ratings['Oregon']
     r_op = ratings['OP']
     
-    # Safety: Return Buffers
-    # (Nodes with 0 = Safe to end here)
-    return_days = {
-        "Forks": 3, "Coos Bay": 2, "Brookings": 2, "Hiouchi": 2, 
-        "Pepperwood": 2, "Maple Grove": 2, "Burney": 2, 
-        "Pyramid": 2, "Eagle Lake": 2, 
-        "Drum Mtns": 0, "Boise": 1, "Rawlins": 0, "Elko": 1, "SLC_Area": 1,
-        "Bend": 2, "Pendleton": 2, "Yreka": 2, "Grants Pass": 2
+    # Safety Logic (Days to Return)
+    return_days_map = {
+        "Forks": 3, "Coos Bay": 2, "Brookings": 2, "Hiouchi": 2, "Pepperwood": 2, "Pyramid": 2,
+        "Drum Mtns": 0, "SLC_Area": 1, "Boise": 1, "Rawlins": 0, "Elko": 1, "Bend": 2, "Pendleton": 2
     }
-    needed = return_days.get(current_loc, 1)
+    needed = return_days_map.get(current_loc, 1)
     
-    # --- RETURN LOGIC ---
     if days_remaining <= needed:
         if current_loc == "Forks": return "RETURN: Forks -> Boise ID"
         if current_loc == "Brookings": return "BAIL: Brookings -> SLC"
-        if current_loc in ["Pepperwood", "Eureka"]: return "BAIL: Pepperwood -> Elko"
+        if current_loc == "Pepperwood": return "BAIL: Pepperwood -> Elko"
         if current_loc == "Boise": return "RETURN: Boise -> Rawlins WY"
         if current_loc == "Rawlins": return "RETURN: Rawlins -> Home"
         if current_loc == "SLC_Area": return "RETURN: Final Leg (SLC -> Home)"
@@ -754,73 +750,93 @@ def get_next_best_move(current_loc, ratings, days_remaining):
         if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)" # Catchup
         return "BAIL: Return Home (Standard)"
 
-    # --- FORWARD LOGIC (The Compass) ---
+    # --- GEOGRAPHY LOGIC ---
     
-    # Start
-    if current_loc == "Start": return "START: Drive to Drum Mtns (UT)"
-    if current_loc == "Drum Mtns": return "DRIVE: Drum Mtns -> Pyramid"
-    
-    # Pyramid / High Desert
-    if current_loc == "Pyramid":
-        if r_pyr >= 3.5: return "FISH: Pyramid (Full Day)"
-        return "MOVE & FISH: Pyramid -> Eagle Lake (Fish PM)"
-    
-    # NorCal Nodes
-    if current_loc == "Eagle Lake":
-        if r_pyr >= 3.5: return "FISH: Eagle Lake (Full Day)" 
-        return "MOVE & FISH: Eagle -> Pepperwood (Eel)"
+    if not is_reverse:
+        # STANDARD: South -> North / West
+        if current_loc == "Start": return "START: Drive to Drum Mtns (UT)"
+        if current_loc == "Drum Mtns": return "DRIVE: Drum Mtns -> Pyramid"
         
-    if current_loc == "Burney":
-        if r_norcal >= 3.5: return "FISH: Burney Area"
-        return "MOVE & FISH: Burney -> Pepperwood"
-
-    if current_loc in ["Pepperwood", "Eureka"]: # Handle Alias
-        if r_norcal >= 3.5: return "FISH: Eel River (Pepperwood)"
-        return "MOVE & FISH: Pepperwood -> Hiouchi"
-
-    if current_loc == "Maple Grove":
-        if r_norcal >= 3.5: return "FISH: Van Duzen (Maple Grv)"
-        return "MOVE & FISH: Maple Grove -> Pepperwood"
-
-    if current_loc == "Hiouchi":
-        if r_norcal >= 3.5: return "FISH: Smith River (Hiouchi)"
-        return "MOVE & FISH: Hiouchi -> Brookings"
-    
-    # Transit Hubs (No Fish -> Move West/North)
-    if current_loc == "Yreka":
-        return "DRIVE: Yreka -> Forks WA (Long Haul)"
-    if current_loc == "Grants Pass":
-        return "DRIVE: Grants Pass -> Forks WA"
-    if current_loc == "Bend":
-        return "DRIVE: Bend -> Brookings (Fish PM)"
-    if current_loc == "Pendleton":
-        return "DRIVE: Pendleton -> Forks WA (Fish PM)"
-    if current_loc == "Elko":
-        return "DRIVE: Elko -> Pepperwood (Long)"
-    if current_loc == "SLC_Area":
-        return "DRIVE: SLC -> Pendleton (OR)" # Default North/West
-
-    # Oregon
-    if current_loc == "Brookings":
-        if r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
-        return "MOVE & FISH: Brookings -> Coos Bay"
+        if current_loc == "Pyramid":
+            if r_pyr >= 3.5: return "FISH: Pyramid (Full Day)"
+            return "MOVE & FISH: Pyramid -> Eagle Lake (Fish PM)"
         
-    if current_loc in ["Coos Bay", "Reedsport"]:
-        if r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
-        return "MOVE: Coos Bay -> Forks (Long Drive)"
+        if current_loc == "Eagle Lake":
+            if r_pyr >= 3.5: return "FISH: Eagle Lake (Full Day)" 
+            return "MOVE & FISH: Eagle -> Pepperwood (Eel)"
+        
+        if current_loc == "Burney":
+            if r_norcal >= 3.5: return "FISH: Burney Area"
+            return "MOVE & FISH: Burney -> Pepperwood"
 
-    # Washington / OP
-    if current_loc == "Forks":
-        if r_op >= 3.0: return "FISH: OP (Forks)"
-        return "RETURN: Forks -> Boise ID"
-    
+        if current_loc in ["Pepperwood", "Eureka"]:
+            if r_norcal >= 3.5: return "FISH: Eel River (Pepperwood)"
+            return "MOVE & FISH: Pepperwood -> Hiouchi"
+
+        if current_loc == "Maple Grove":
+            if r_norcal >= 3.5: return "FISH: Van Duzen (Maple Grv)"
+            return "MOVE & FISH: Maple Grove -> Pepperwood"
+
+        if current_loc == "Hiouchi":
+            if r_norcal >= 3.5: return "FISH: Smith River (Hiouchi)"
+            return "MOVE & FISH: Hiouchi -> Brookings"
+        
+        if current_loc == "Yreka": return "DRIVE: Yreka -> Forks WA (Long Haul)"
+        if current_loc == "Grants Pass": return "DRIVE: Grants Pass -> Forks WA"
+        if current_loc == "Bend": return "DRIVE: Bend -> Brookings (Fish PM)"
+        if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)"
+        if current_loc == "Elko": return "DRIVE: Elko -> Pepperwood (Long)"
+        if current_loc == "SLC_Area": return "DRIVE: SLC -> Pendleton (OR)"
+
+        if current_loc == "Brookings":
+            if r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
+            return "MOVE & FISH: Brookings -> Coos Bay"
+            
+        if current_loc in ["Coos Bay", "Reedsport"]:
+            if r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
+            return "MOVE: Coos Bay -> Forks (Long Drive)"
+
+        if current_loc == "Forks":
+            if r_op >= 3.0: return "FISH: OP (Forks)"
+            return "RETURN: Forks -> Boise ID"
+
+    else:
+        # REVERSE: North -> South / East
+        if current_loc == "Start": return "START: Drive to Forks WA (Long Haul)" # Or SLC depending on opt
+        
+        if current_loc == "Forks":
+            if r_op >= 3.0: return "FISH: OP (Forks)"
+            return "DRIVE: Forks -> Coos Bay (Long/Rev)"
+            
+        if current_loc in ["Coos Bay", "Reedsport"]:
+            if r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
+            return "MOVE & FISH: Coos Bay -> Brookings (Reverse)"
+
+        if current_loc == "Brookings":
+            if r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
+            return "MOVE & FISH: Brookings -> Hiouchi (Reverse)"
+            
+        if current_loc == "Hiouchi":
+            if r_norcal >= 3.5: return "FISH: Smith River (Hiouchi)"
+            return "MOVE & FISH: Hiouchi -> Pepperwood (Reverse)"
+
+        if current_loc in ["Pepperwood", "Eureka"]:
+            if r_norcal >= 3.5: return "FISH: Eel River (Pepperwood)"
+            return "MOVE & FISH: Pepperwood -> Eagle (Reverse)"
+            
+        if current_loc == "Eagle Lake":
+            if r_pyr >= 3.5: return "FISH: Eagle Lake (Full Day)"
+            return "MOVE & FISH: Eagle -> Pyramid (Reverse)"
+            
+        if current_loc == "Pyramid":
+            if r_pyr >= 3.5: return "FISH: Pyramid (Full Day)"
+            return "RETURN: Drum Mtns -> Home" # Close loop
+
     if current_loc == "Home": return "TRIP COMPLETE"
-
     return "Stay / Fish Local" 
 
 
 # --- 2. LIVE INTEL FUNCTIONS ---
-
 @st.cache_data(ttl=3600)
 def get_nws_forecast_data(lat, lon):
     try:
@@ -840,7 +856,6 @@ def get_nws_forecast_data(lat, lon):
 @st.cache_data(ttl=600) 
 def get_usgs_simple(site_id, param_code='00060'):
     try:
-        # P2D window for reliability
         url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=P2D"
         r = requests.get(url).json()
         ts_data = r['value']['timeSeries'][0]['values'][0]['value']
@@ -889,9 +904,9 @@ if 'day_override' not in st.session_state:
 # --- 4. SIDEBAR CONTROLS ---
 with st.sidebar.expander("Conditions", expanded=False):
     rc_pyr = st.slider("Pyramid Lake", 0.0, 5.0, 3.5, 0.5)
-    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 3.5, 0.5)
-    rc_ore = st.slider("Oregon Coast", 0.0, 5.0, 2.0, 0.5)
-    rc_op = st.slider("Olympic Peninsula", 0.0, 5.0, 2.0, 0.5)
+    rc_norcal = st.slider("NorCal Coast", 0.0, 5.0, 3.5, 0.5) # Default 3.5
+    rc_ore = st.slider("Oregon Coast", 0.0, 5.0, 2.0, 0.5)   # Default 2.0
+    rc_op = st.slider("Olympic Peninsula", 0.0, 5.0, 2.0, 0.5) # Default 2.0
 ratings = {"Pyramid": rc_pyr, "NorCal": rc_norcal, "Oregon": rc_ore, "OP": rc_op}
 
 with st.sidebar.expander("Other Variables", expanded=False):
@@ -979,11 +994,11 @@ winner = df_rank.iloc[0]
 st.info(f"**Current Winner:** Option {winner['Option']} - {winner['Summary']}")
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Pyramid Days", winner['Pyramid'])
-c2.metric("Eagle Days", winner['Eagle'])
-c3.metric("NorCal Days", winner['NorCal'])
-c4.metric("Oregon Days", winner['Oregon'])
-c5.metric("OP Days", winner['OP'])
+c1.metric("Pyramid", winner['Pyramid'])
+c2.metric("Eagle", winner['Eagle'])
+c3.metric("NorCal", winner['NorCal'])
+c4.metric("Oregon", winner['Oregon'])
+c5.metric("OP", winner['OP'])
 
 c_a, c_b, c_c, c_d = st.columns(4)
 c_a.metric("Total Fish Days", winner['Fish Days'])
@@ -1011,31 +1026,29 @@ with c_plan:
 with c_rev:
     rev_mode = st.toggle("Reverse Route?")
 
-# Manual Override
+# Manual Override Logic
 with st.expander("🛠️ Live Reroute / Manual Override", expanded=False):
     c_day, c_loc = st.columns(2)
     ovr_day = c_day.number_input("Current Day #", 1, 18, 1)
     all_locs = sorted(df_db['Current_Loc'].unique())
     
-    # FORCE RESET: If session state is None, reset widget
+    # Logic: Reset logic needs to check session state before creating widget
     if st.session_state['current_location_override'] is None:
-        ovr_idx = 0 # Default (On Plan)
+        idx_default = 0 # "On Plan"
     else:
         try:
-            ovr_idx = ["(On Plan)"] + all_locs
-            ovr_idx = ovr_idx.index(st.session_state['current_location_override'])
+            # Build list again to find index
+            temp_list = ["(On Plan)"] + all_locs
+            idx_default = temp_list.index(st.session_state['current_location_override'])
         except:
-            ovr_idx = 0
-
-    ovr_loc_selection = c_loc.selectbox("Current Location", ["(On Plan)"] + all_locs, index=ovr_idx)
+            idx_default = 0
+            
+    ovr_loc = c_loc.selectbox("Current Location", ["(On Plan)"] + all_locs, index=idx_default)
     
-    # Logic: Only update session state if changed by user interaction
-    if ovr_loc_selection == "(On Plan)":
-        st.session_state['current_location_override'] = None
-    else:
-        st.session_state['current_location_override'] = ovr_loc_selection
+    if ovr_loc != "(On Plan)":
+        st.session_state['current_location_override'] = ovr_loc
         st.session_state['day_override'] = ovr_day
-        st.warning(f"Rerouting from Day {ovr_day} at {ovr_loc_selection}...")
+        st.warning(f"Rerouting from Day {ovr_day} at {ovr_loc}...")
     
     if st.button("Reset to Base Plan"):
         st.session_state['current_location_override'] = None
@@ -1068,7 +1081,8 @@ if not base_steps.empty:
     if ovr_active:
         curr_sim_loc = ovr_l
         for d in range(ovr_d, 18): 
-            action = get_next_best_move(curr_sim_loc, ratings, 18-d)
+            # Pass rev_mode to get correct direction
+            action = get_next_best_move(curr_sim_loc, ratings, 18-d, rev_mode)
             db_match = df_db[df_db['Action_Label'] == action]
             miles = db_match.iloc[0]['Miles'] if not db_match.empty else 0
             hrs = db_match.iloc[0]['Drive_Hrs'] if not db_match.empty else 0
