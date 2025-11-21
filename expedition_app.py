@@ -4,7 +4,6 @@ import io
 import datetime
 import requests
 from datetime import timedelta
-import re
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Steelhead Expedition Command Center", layout="wide", page_icon="🎣")
@@ -16,6 +15,7 @@ Start,START: Drive to SLC (UT),SLC_Area,1,470,7.5,N/A,2
 Start,START: Drive to Brookings OR,Brookings,2,750,11.0,RC_Oregon,2
 Start,START: Drive to Forks WA (Long Haul),Forks,3,1000,24.0,N/A,3
 Start,START: Drive to Eureka/Pepperwood,Pepperwood,2,800,12.0,RC_NorCal,2
+Start,START: Drive to Elko (NV),Elko,1,670,10.5,N/A,2
 Drum Mtns,DRIVE: Drum Mtns -> Pyramid,Pyramid,1,420,6.5,RC_Pyramid,2
 Drum Mtns,RETURN: Drum Mtns -> Home,Home,1,470,7.5,N/A,0
 Pyramid,FISH: Pyramid (Full Day),Pyramid,1,0,0,RC_Pyramid,2
@@ -92,10 +92,10 @@ Rawlins,RETURN: Rawlins -> Home,Home,1,370,7.0,N/A,0
 SLC_Area,RETURN: Final Leg (SLC -> Home),Home,1,450,7.0,N/A,0
 SLC_Area,DRIVE: SLC -> Bend (OR),Bend,1,600,9.5,N/A,2
 SLC_Area,DRIVE: SLC -> Pendleton (OR),Pendleton,1,500,7.5,N/A,2
-Any,RETURN: Begin Return Leg,SLC_Area,1,750,11.0,N/A,1
-Any,BAIL: Return Home (Standard),Home,2,750,11.0,N/A,0
 Elko,DRIVE: Elko -> Pepperwood (Long),Pepperwood,1,530,9.0,RC_NorCal,2
 Elko,RETURN: Final Leg (SLC -> Home),Home,1,670,11.0,N/A,0
+Any,RETURN: Begin Return Leg,SLC_Area,1,750,11.0,N/A,1
+Any,BAIL: Return Home (Standard),Home,2,750,11.0,N/A,0
 Eureka,BAIL: Eureka -> Elko,Elko,1,530,9.0,N/A,2
 Home,TRIP COMPLETE,Home,0,0,0,N/A,0
 Brookings,RETURN: Begin Return Leg,SLC_Area,1,750,11.0,N/A,1
@@ -103,7 +103,7 @@ Brookings,MOVE & FISH: Brookings -> Hiouchi (Reverse),Hiouchi,1,25,0.5,RC_NorCal
 Hiouchi,MOVE & FISH: Hiouchi -> Pepperwood (Reverse),Pepperwood,1,90,1.5,RC_NorCal,2
 """
 
-# Itinerary: Full Set (A-S, A_r-S_r)
+# Itinerary: 1-Day Segments
 ITINERARY_CSV_RAW = """Option,Day,Activity
 A,1,START: Drive to Drum Mtns (UT)
 A,2,DRIVE: Drum Mtns -> Pyramid
@@ -429,7 +429,7 @@ A_r,14,MOVE & FISH: Eagle -> Pyramid (Reverse)
 A_r,15,FISH: Pyramid (Full Day)
 A_r,16,FISH: Pyramid (Full Day)
 A_r,17,RETURN: Drum Mtns -> Home
-B_r,1,START: Drive to Forks WA (Long Haul)
+B_r,1,START: Drive to SLC (UT)
 B_r,2,DRIVE: SLC -> Pendleton (OR)
 B_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 B_r,4,FISH: OP (Forks)
@@ -447,7 +447,7 @@ B_r,15,FISH: Pyramid (Full Day)
 B_r,16,FISH: Pyramid (Full Day)
 B_r,17,FISH: Pyramid (Full Day)
 B_r,18,RETURN: Drum Mtns -> Home
-C_r,1,START: Drive to Forks WA (Long Haul)
+C_r,1,START: Drive to SLC (UT)
 C_r,2,DRIVE: SLC -> Pendleton (OR)
 C_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 C_r,4,FISH: OP (Forks)
@@ -464,7 +464,7 @@ C_r,14,FISH: Eel River (Pepperwood)
 C_r,15,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 C_r,16,MOVE & FISH: Eagle -> Pyramid (Reverse)
 C_r,17,RETURN: Drum Mtns -> Home
-D_r,1,START: Drive to Forks WA (Long Haul)
+D_r,1,START: Drive to SLC (UT)
 D_r,2,DRIVE: SLC -> Pendleton (OR)
 D_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 D_r,4,FISH: OP (Forks)
@@ -514,7 +514,7 @@ F_r,14,FISH: Pyramid (Full Day)
 F_r,15,FISH: Pyramid (Full Day)
 F_r,16,RETURN: Drum Mtns -> Home
 F_r,17,TRIP COMPLETE
-G_r,1,START: Drive to Forks WA (Long Haul)
+G_r,1,START: Drive to SLC (UT)
 G_r,2,DRIVE: SLC -> Pendleton (OR)
 G_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 G_r,4,FISH: OP (Forks)
@@ -530,7 +530,7 @@ G_r,13,FISH: Pyramid (Full Day)
 G_r,14,FISH: Pyramid (Full Day)
 G_r,15,FISH: Pyramid (Full Day)
 G_r,16,RETURN: Drum Mtns -> Home
-H_r,1,START: Drive to Forks WA (Long Haul)
+H_r,1,START: Drive to SLC (UT)
 H_r,2,DRIVE: SLC -> Pendleton (OR)
 H_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 H_r,4,FISH: OP (Forks)
@@ -580,7 +580,7 @@ J_r,14,FISH: Pyramid (Full Day)
 J_r,15,FISH: Pyramid (Full Day)
 J_r,16,FISH: Pyramid (Full Day)
 J_r,17,RETURN: Drum Mtns -> Home
-K_r,1,START: Drive to Forks WA (Long Haul)
+K_r,1,START: Drive to SLC (UT)
 K_r,2,DRIVE: SLC -> Pendleton (OR)
 K_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 K_r,4,FISH: OP (Forks)
@@ -596,7 +596,7 @@ K_r,13,FISH: Pyramid (Full Day)
 K_r,14,FISH: Pyramid (Full Day)
 K_r,15,FISH: Pyramid (Full Day)
 K_r,16,RETURN: Drum Mtns -> Home
-L_r,1,START: Drive to Forks WA (Long Haul)
+L_r,1,START: Drive to SLC (UT)
 L_r,2,DRIVE: SLC -> Pendleton (OR)
 L_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 L_r,4,FISH: OP (Forks)
@@ -692,7 +692,7 @@ Q_r,14,MOVE & FISH: Pepperwood -> Eagle (Reverse)
 Q_r,15,MOVE & FISH: Eagle -> Pyramid (Reverse)
 Q_r,16,DRIVE: Drum Mtns -> Pyramid
 Q_r,17,RETURN: Drum Mtns -> Home
-R_r,1,START: Drive to Forks WA (Long Haul)
+R_r,1,START: Drive to SLC (UT)
 R_r,2,DRIVE: SLC -> Pendleton (OR)
 R_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 R_r,4,FISH: OP (Forks)
@@ -751,7 +751,7 @@ def get_next_best_move(current_loc, ratings, days_remaining, is_reverse=False):
         if current_loc == "Forks": return "RETURN: Forks -> Boise ID"
         if current_loc == "Brookings": return "BAIL: Brookings -> SLC"
         if current_loc in ["Pepperwood", "Eureka"]: return "BAIL: Pepperwood -> Elko"
-        if current_loc == "Bend": return "DRIVE: Bend -> Brookings (Fish PM)"
+        if current_loc == "Bend": return "DRIVE: Bend -> Brookings (Fish PM)" # Try to finish leg
         if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)"
         return "BAIL: Return Home (Standard)"
 
@@ -792,40 +792,41 @@ def get_next_best_move(current_loc, ratings, days_remaining, is_reverse=False):
         if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)"
 
         if current_loc == "Brookings":
-            # Logic: Stay if Oregon > OP, else Move
-            if r_ore >= r_op and r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
+            # Compare Brookings (Oregon) vs OP (Next Region)
+            # Logic: Stay if Oregon >= OP, else Move
+            if r_ore >= r_op: return "FISH: Chetco River (Brookings)"
             return "MOVE & FISH: Brookings -> Coos Bay"
             
         if current_loc in ["Coos Bay", "Reedsport"]:
-            if r_ore >= r_op and r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
+            if r_ore >= r_op: return "FISH: Umpqua (Coos Bay)"
             return "MOVE: Coos Bay -> Forks (Long Drive)"
 
         if current_loc == "Forks":
-            if r_op >= 3.0: return "FISH: OP (Forks)"
-            return "RETURN: Forks -> Boise ID"
+            # Only leave Forks if safety check triggers (handled above)
+            return "FISH: OP (Forks)"
 
     else:
         # REVERSE: North -> South / East
-        if current_loc == "Start": return "START: Drive to Forks WA (Long Haul)" 
+        if current_loc == "Start": return "START: Drive to SLC (UT)" 
         
         if current_loc == "Forks":
-            if r_op >= r_ore and r_op >= 3.0: return "FISH: OP (Forks)"
-            return "DRIVE: Forks -> Coos Bay (Long/Rev)"
+             # Only leave Forks if safety check triggers
+            return "FISH: OP (Forks)"
             
         if current_loc in ["Coos Bay", "Reedsport"]:
-            if r_ore >= r_norcal and r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
+            if r_ore >= r_norcal: return "FISH: Umpqua (Coos Bay)"
             return "MOVE & FISH: Coos Bay -> Brookings (Reverse)"
 
         if current_loc == "Brookings":
-            if r_ore >= r_norcal and r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
+            if r_ore >= r_norcal: return "FISH: Chetco River (Brookings)"
             return "MOVE & FISH: Brookings -> Hiouchi (Reverse)"
             
         if current_loc == "Hiouchi":
-            if r_norcal >= r_pyr and r_norcal >= 3.5: return "FISH: Smith River (Hiouchi)"
+            if r_norcal >= r_pyr: return "FISH: Smith River (Hiouchi)"
             return "MOVE & FISH: Hiouchi -> Pepperwood (Reverse)"
 
         if current_loc in ["Pepperwood", "Eureka"]:
-            if r_norcal >= r_pyr and r_norcal >= 3.5: return "FISH: Eel River (Pepperwood)"
+            if r_norcal >= r_pyr: return "FISH: Eel River (Pepperwood)"
             return "MOVE & FISH: Pepperwood -> Eagle (Reverse)"
             
         if current_loc == "Eagle Lake":
