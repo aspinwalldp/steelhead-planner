@@ -9,7 +9,6 @@ from datetime import timedelta
 st.set_page_config(page_title="Steelhead Expedition Command Center", layout="wide", page_icon="🎣")
 
 # --- 1. DATA LOADING ---
-# Updated: Replaced Reedsport with Coos Bay.
 BUILDER_DB_CSV = """Current_Loc,Action_Label,New_Loc,Days_Used,Miles,Drive_Hrs,River_Region,Days_To_Return
 Start,START: Drive to Drum Mtns (UT),Drum Mtns,1,470,7.5,N/A,2
 Start,START: Drive to SLC (UT),SLC_Area,1,470,7.5,N/A,2
@@ -103,7 +102,6 @@ Brookings,MOVE & FISH: Brookings -> Hiouchi (Reverse),Hiouchi,1,25,0.5,RC_NorCal
 Hiouchi,MOVE & FISH: Hiouchi -> Pepperwood (Reverse),Pepperwood,1,90,1.5,RC_NorCal,2
 """
 
-# Itinerary: Synced with Coos Bay
 ITINERARY_CSV_RAW = """Option,Day,Activity
 A,1,START: Drive to Drum Mtns (UT)
 A,2,DRIVE: Drum Mtns -> Pyramid
@@ -454,7 +452,7 @@ C_r,4,FISH: OP (Forks)
 C_r,5,FISH: OP (Forks)
 C_r,6,FISH: OP (Forks)
 C_r,7,DRIVE: Forks -> Reedsport (Long/Rev)
-C_r,8,MOVE & FISH: Coos Bay -> Brookings (Reverse)
+C_r,8,MOVE & FISH: Reedsport -> Brookings (Reverse)
 C_r,9,FISH: Chetco River (Brookings)
 C_r,10,FISH: Chetco River (Brookings)
 C_r,11,MOVE & FISH: Brookings -> Hiouchi (Reverse)
@@ -470,7 +468,7 @@ D_r,3,DRIVE: Pendleton -> Forks WA (Fish PM)
 D_r,4,FISH: OP (Forks)
 D_r,5,FISH: OP (Forks)
 D_r,6,DRIVE: Forks -> Reedsport (Long/Rev)
-D_r,7,MOVE & FISH: Coos Bay -> Brookings (Reverse)
+D_r,7,MOVE & FISH: Reedsport -> Brookings (Reverse)
 D_r,8,FISH: Chetco River (Brookings)
 D_r,9,FISH: Chetco River (Brookings)
 D_r,10,MOVE & FISH: Brookings -> Hiouchi (Reverse)
@@ -735,11 +733,12 @@ def get_next_best_move(current_loc, ratings, days_remaining):
     # Safety Logic (Days to Return)
     return_days_map = {
         "Forks": 3, "Coos Bay": 2, "Brookings": 2, "Hiouchi": 2, "Pepperwood": 2, "Pyramid": 2,
-        "Drum Mtns": 0, "SLC_Area": 1, "Boise": 1, "Rawlins": 0, "Elko": 1
+        "Drum Mtns": 0, "SLC_Area": 1, "Boise": 1, "Rawlins": 0, "Elko": 1, "Bend": 2, "Pendleton": 2
     }
     needed = return_days_map.get(current_loc, 1)
     
     if days_remaining <= needed:
+        # Emergency Return Logic
         if current_loc == "Forks": return "RETURN: Forks -> Boise ID"
         if current_loc == "Brookings": return "BAIL: Brookings -> SLC"
         if current_loc == "Pepperwood": return "BAIL: Pepperwood -> Elko"
@@ -747,69 +746,90 @@ def get_next_best_move(current_loc, ratings, days_remaining):
         if current_loc == "Rawlins": return "RETURN: Rawlins -> Home"
         if current_loc == "SLC_Area": return "RETURN: Final Leg (SLC -> Home)"
         if current_loc == "Elko": return "RETURN: Final Leg (SLC -> Home)"
+        if current_loc == "Bend": return "DRIVE: Bend -> Brookings (Fish PM)" # Try to finish leg if caught
+        if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)"
         return "BAIL: Return Home (Standard)"
 
-    # Geography Logic
+    # Geography Logic (Complete Graph)
     if current_loc == "Start": return "START: Drive to Drum Mtns (UT)"
     if current_loc == "Drum Mtns": return "DRIVE: Drum Mtns -> Pyramid"
     
     if current_loc == "Pyramid":
-        if r_pyr >= 3: return "FISH: Pyramid (Full Day)"
+        if r_pyr >= 3.5: return "FISH: Pyramid (Full Day)"
         return "MOVE & FISH: Pyramid -> Eagle Lake (Fish PM)"
         
     if current_loc == "Eagle Lake":
-        if r_pyr >= 3: return "FISH: Eagle Lake (Full Day)" 
+        if r_pyr >= 3.5: return "FISH: Eagle Lake (Full Day)" 
         return "MOVE & FISH: Eagle -> Pepperwood (Eel)"
     
-    if current_loc == "Pepperwood":
-        if r_norcal >= 3: return "FISH: Eel River (Pepperwood)"
+    if current_loc == "Burney":
+        if r_norcal >= 3.5: return "FISH: Burney Area"
+        return "MOVE & FISH: Burney -> Pepperwood"
+
+    if current_loc == "Pepperwood": # Eureka Hub
+        if r_norcal >= 3.5: return "FISH: Eel River (Pepperwood)"
         return "MOVE & FISH: Pepperwood -> Hiouchi"
 
+    if current_loc == "Maple Grove":
+        if r_norcal >= 3.5: return "FISH: Van Duzen (Maple Grv)"
+        return "MOVE & FISH: Maple Grove -> Pepperwood"
+
     if current_loc == "Hiouchi":
-        if r_norcal >= 3: return "FISH: Smith River (Hiouchi)"
+        if r_norcal >= 3.5: return "FISH: Smith River (Hiouchi)"
         return "MOVE & FISH: Hiouchi -> Brookings"
         
+    if current_loc == "Yreka":
+        return "DRIVE: Yreka -> Forks WA (Long Haul)" # Transit hub
+        
+    if current_loc == "Grants Pass":
+        return "DRIVE: Grants Pass -> Forks WA"
+
     if current_loc == "Brookings":
-        if r_ore >= 3: return "FISH: Chetco River (Brookings)"
+        if r_ore >= 3.0: return "FISH: Chetco River (Brookings)"
         return "MOVE & FISH: Brookings -> Coos Bay"
         
     if current_loc == "Coos Bay":
-        if r_ore >= 3: return "FISH: Umpqua (Coos Bay)"
+        if r_ore >= 3.0: return "FISH: Umpqua (Coos Bay)"
         return "MOVE: Coos Bay -> Forks (Long Drive)"
+        
+    if current_loc == "Reedsport": # Alias for Coos Bay logic
+        if r_ore >= 3.0: return "FISH: Umpqua (Reedsport)"
+        return "MOVE: Reedsport -> Forks (Long Drive)"
 
     if current_loc == "Forks":
-        if r_op >= 3: return "FISH: OP (Forks)"
+        if r_op >= 3.0: return "FISH: OP (Forks)"
         return "RETURN: Forks -> Boise ID"
     
+    # Intermediate Transit Nodes (Force forward movement)
+    if current_loc == "Bend": return "DRIVE: Bend -> Brookings (Fish PM)"
+    if current_loc == "Pendleton": return "DRIVE: Pendleton -> Forks WA (Fish PM)"
+    if current_loc == "SLC_Area": return "DRIVE: SLC -> Bend (OR)" # Default North
+    if current_loc == "Elko": return "DRIVE: Elko -> Pepperwood (Long)"
+
     return "Stay / Fish Local" 
 
 
 # --- 2. LIVE INTEL FUNCTIONS ---
-
 @st.cache_data(ttl=3600)
 def get_nws_forecast_data(lat, lon):
     try:
         headers = {"User-Agent": "(my-expedition-app)"}
         lat, lon = round(lat, 4), round(lon, 4)
-        
         point_url = f"https://api.weather.gov/points/{lat},{lon}"
         r = requests.get(point_url, headers=headers)
         if r.status_code != 200: return None
         grid_data = r.json()
-        
         forecast_url = grid_data['properties']['forecast']
         r2 = requests.get(forecast_url, headers=headers)
         if r2.status_code != 200: return None
-        
         return r2.json()['properties']['periods']
     except:
         return None
 
 @st.cache_data(ttl=600) 
 def get_usgs_simple(site_id, param_code='00060'):
-    """Fetch current value. Lookback 4 days for slow sensors."""
     try:
-        url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=P4D"
+        url = f"https://waterservices.usgs.gov/nwis/iv/?format=json&sites={site_id}&parameterCd={param_code}&period=P2D"
         r = requests.get(url).json()
         ts_data = r['value']['timeSeries'][0]['values'][0]['value']
         if not ts_data: return None
@@ -821,11 +841,8 @@ def get_usgs_simple(site_id, param_code='00060'):
 try:
     df_db = pd.read_csv(io.StringIO(BUILDER_DB_CSV))
     df_itin = pd.read_csv(io.StringIO(ITINERARY_CSV_RAW))
-    
-    # Fix types
     df_db['Miles'] = pd.to_numeric(df_db['Miles'], errors='coerce').fillna(0).astype(int)
     df_db['Drive_Hrs'] = pd.to_numeric(df_db['Drive_Hrs'], errors='coerce').fillna(0).round(1)
-    
 except Exception as e:
     st.error(f"Data Error: {e}")
     st.stop()
@@ -881,7 +898,6 @@ with st.sidebar.expander("Veto Options", expanded=False):
     veto_ore = st.checkbox("Veto Oregon?", False)
     veto_op = st.checkbox("Veto OP?", False)
 
-# Sidebar Footer (Fixed)
 st.sidebar.divider()
 st.sidebar.markdown("### 🔗 Quick Links")
 st.sidebar.markdown("""
@@ -983,14 +999,23 @@ with c_plan:
 with c_rev:
     rev_mode = st.toggle("Reverse Route?")
 
-# Manual Override
+# Manual Override with Correct Reset Logic
 with st.expander("🛠️ Live Reroute / Manual Override", expanded=False):
     c_day, c_loc = st.columns(2)
     ovr_day = c_day.number_input("Current Day #", 1, 18, 1)
     all_locs = sorted(df_db['Current_Loc'].unique())
-    ovr_loc = c_loc.selectbox("Current Location", ["(On Plan)"] + all_locs)
     
-    if ovr_loc != "(On Plan)":
+    # Force reset of widget state if session state is None
+    idx_loc = 0
+    if st.session_state['current_location_override'] in all_locs:
+        idx_loc = all_locs.index(st.session_state['current_location_override']) + 1
+        
+    ovr_loc = c_loc.selectbox("Current Location", ["(On Plan)"] + all_locs, index=idx_loc)
+    
+    # Update Session State based on selection
+    if ovr_loc == "(On Plan)":
+        st.session_state['current_location_override'] = None
+    else:
         st.session_state['current_location_override'] = ovr_loc
         st.session_state['day_override'] = ovr_day
         st.warning(f"Rerouting from Day {ovr_day} at {ovr_loc}...")
@@ -1069,7 +1094,6 @@ if st.button("🔄 Refresh Live Data"):
                             precip_prob = x.get('probabilityOfPrecipitation', {}).get('value', 0)
                             wind = x.get('windSpeed', 'N/A')
                             forecast_text = x['detailedForecast']
-                            # Scan text for accumulation
                             accum_text = ""
                             if "precipitation" in forecast_text or "rainfall" in forecast_text:
                                 sentences = forecast_text.split('.')
@@ -1094,24 +1118,24 @@ if st.button("🔄 Refresh Live Data"):
         
         REGIONS = {
             "NorCal": [
-                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Type": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
-                {"Name": "Eel R a Scotia", "ID": "11477000", "Type": "USGS", "Target": "1500-4500 cfs", "P": "00060", "Note": "Takes forever to clear. Check Turbidity."},
-                {"Name": "SF Eel nr Miranda", "ID": "11476500", "Type": "USGS", "Target": "300-1800 cfs", "P": "00060", "Note": "Clears much faster than the main stem."},
-                {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Type": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."}
+                {"Name": "Smith R nr Crescent City", "ID": "11532500", "Source": "USGS", "Target": "7.0-11.0 ft", "P": "00065", "Note": "The Holy Grail. Drops fast. < 6ft is too low."},
+                {"Name": "Eel R a Scotia", "ID": "11477000", "Source": "USGS", "Target": "1500-4500 cfs", "P": "00060", "Note": "Takes forever to clear. Check Turbidity."},
+                {"Name": "SF Eel nr Miranda", "ID": "11476500", "Source": "USGS", "Target": "300-1800 cfs", "P": "00060", "Note": "Clears much faster than the main stem."},
+                {"Name": "Van Duzen R nr Bridgeville", "ID": "11478500", "Source": "USGS", "Target": "200-1200 cfs", "P": "00060", "Note": "\"The Dirty Van.\" Muddy easily."}
             ],
             "Oregon": [
-                {"Name": "Chetco R nr Brookings", "ID": "14400000", "Type": "USGS", "Target": "1200-4000 cfs", "P": "00060", "Note": "2,000 is magic. > 4,000 is tough wading."},
-                {"Name": "Elk R abv Hatchery", "ID": "14338000", "Type": "USGS", "Target": "3.5-5.5 ft", "P": "00065", "Note": "Tiny system. Clears in 24 hours."},
-                {"Name": "Sixes R at Hwy 101", "ID": "14327150", "Type": "USGS", "Target": "4.0-7.0 ft", "P": "00065", "Note": "Dark tannin water. Fishable higher than you think."},
-                {"Name": "Rogue R nr Agness", "ID": "14372300", "Type": "USGS", "Target": "2000-6000 cfs", "P": "00060", "Note": "Big water. Safe bet when small streams blow out."},
-                {"Name": "N Umpqua a Winchester", "ID": "14319500", "Type": "USGS", "Target": "1500-4000 cfs", "P": "00060", "Note": "The famous \"Fly Only\" water is upstream."},
-                {"Name": "Umpqua R nr Elkton", "ID": "14321000", "Type": "USGS", "Target": "4000-10000 cfs", "P": "00060", "Note": "Big water swinging."}
+                {"Name": "Chetco R nr Brookings", "ID": "14400000", "Source": "USGS", "Target": "1200-4000 cfs", "P": "00060", "Note": "2,000 is magic. > 4,000 is tough wading."},
+                {"Name": "Elk R abv Hatchery", "ID": "14338000", "Source": "USGS", "Target": "3.5-5.5 ft", "P": "00065", "Note": "Tiny system. Clears in 24 hours."},
+                {"Name": "Sixes R at Hwy 101", "ID": "14327150", "Source": "USGS", "Target": "4.0-7.0 ft", "P": "00065", "Note": "Dark tannin water. Fishable higher than you think."},
+                {"Name": "Rogue R nr Agness", "ID": "14372300", "Source": "USGS", "Target": "2000-6000 cfs", "P": "00060", "Note": "Big water. Safe bet when small streams blow out."},
+                {"Name": "N Umpqua a Winchester", "ID": "14319500", "Source": "USGS", "Target": "1500-4000 cfs", "P": "00060", "Note": "The famous \"Fly Only\" water is upstream."},
+                {"Name": "Umpqua R nr Elkton", "ID": "14321000", "Source": "USGS", "Target": "4000-10000 cfs", "P": "00060", "Note": "Big water swinging."}
             ],
             "OP": [
-                {"Name": "Bogachiel R nr La Push", "ID": "12043000", "Type": "USGS", "Target": "500-2500 cfs", "P": "00060", "Note": "The local favorite. Gets crowded."},
-                {"Name": "Calawah R nr Forks", "ID": "12043300", "Type": "USGS", "Target": "300-1500 cfs", "P": "00060", "Note": "Steep and fast. Clears quickly."},
-                {"Name": "Hoh R at US 101", "ID": "12041200", "Type": "USGS", "Target": "1000-4000 cfs", "P": "00060", "Note": "Glacial grey color is normal (\"Hoh Grey\")."},
-                {"Name": "Queets R nr Clearwater", "ID": "12040500", "Type": "USGS", "Target": "2000-7000 cfs", "P": "00060", "Note": "Wild, remote, big water."}
+                {"Name": "Bogachiel R nr La Push", "ID": "12043000", "Source": "USGS", "Target": "500-2500 cfs", "P": "00060", "Note": "The local favorite. Gets crowded."},
+                {"Name": "Calawah R nr Forks", "ID": "12043300", "Source": "USGS", "Target": "300-1500 cfs", "P": "00060", "Note": "Steep and fast. Clears quickly."},
+                {"Name": "Hoh R at US 101", "ID": "12041200", "Source": "USGS", "Target": "1000-4000 cfs", "P": "00060", "Note": "Glacial grey color is normal (\"Hoh Grey\")."},
+                {"Name": "Queets R nr Clearwater", "ID": "12040500", "Source": "USGS", "Target": "2000-7000 cfs", "P": "00060", "Note": "Wild, remote, big water."}
             ]
         }
         
@@ -1122,7 +1146,6 @@ if st.button("🔄 Refresh Live Data"):
                 with g_cols[i % 4]:
                     val = get_usgs_simple(r['ID'], r['P'])
                     
-                    # Color Logic
                     color = "off"
                     status_icon = ""
                     try:
@@ -1143,7 +1166,6 @@ if st.button("🔄 Refresh Live Data"):
                     except: pass
 
                     unit = "ft" if "ft" in r['Target'] else "cfs"
-                    # Link Name
                     url = f"https://waterdata.usgs.gov/nwis/uv?site_no={r['ID']}"
                     st.markdown(f"[{r['Name']}]({url})")
                     
