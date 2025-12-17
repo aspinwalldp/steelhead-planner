@@ -5,23 +5,14 @@ import requests
 from datetime import timedelta
 import re
 import math
-import os
 import json
 
-# --- Load offline routing file safely ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROUTES_PATH = os.path.join(BASE_DIR, "routes.json")
-
-if not os.path.exists(ROUTES_PATH):
-    st.error(f"routes.json not found at: {ROUTES_PATH}")
-    ROUTES = {}
-else:
-    with open(ROUTES_PATH, "r") as f:
-        ROUTES = json.load(f)
+with open("routes.json", "r") as f:
+    ROUTES = json.load(f)
 
 def get_saved_route(a, b):
     key = "||".join(sorted([a, b]))
-    return ROUTES.get(key, [])
+    return ROUTES.get(key)
 
 # Optional: yfinance for live oil prices
 try:
@@ -32,21 +23,13 @@ except ImportError:
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Steelhead Navigator", layout="wide", page_icon="🧭")
 
-# --- RESET LOGIC (Planner Reset = Itinerary + Map) ---
+# Reset logic
+if 'reset_id' not in st.session_state:
+    st.session_state.reset_id = 0
 
-def reset_planner():
-    """Clear all itinerary + map state keys."""
-    keys_to_clear = [
-        # itinerary
-        "df", "ordered_hubs", "travel_hubs",
-        "hub_number_map", "itinerary_generated",
-
-        # map
-        "df_route", "map_ready"
-    ]
-    for k in keys_to_clear:
-        if k in st.session_state:
-            del st.session_state[k]
+def trigger_reset():
+    st.session_state.reset_id += 1
+    st.experimental_rerun()
 
 # ===== 1. DATA & METADATA =====
 
@@ -554,12 +537,12 @@ with st.sidebar:
         start_date = st.date_input(
             "Departure",
             datetime.date(2026, 1, 1),
-            key=f"date_start_{st.session_state.reset_id}"
+            key="date_start"
         )
         end_date = st.date_input(
             "Return By",
             datetime.date(2026, 1, 17),
-            key=f"date_end_{st.session_state.reset_id}"
+            key="date_end"
         )
         total_trip_days = (end_date - start_date).days + 1
         if total_trip_days < 1:
@@ -673,8 +656,7 @@ with st.sidebar:
         v_op = st.checkbox("Veto OP", key=f"v_op_{st.session_state.reset_id}")
         vetoes = {"Pyramid": v_pyr, "NorCal": v_norcal, "Oregon": v_ore, "OP": v_op}
 
-    with st.sidebar:
-        st.button("Reset Planner", key="reset_planner_btn", on_click=reset_planner)
+    st.button("Reset Planner", on_click=trigger_reset)
 
     st.divider()
     st.markdown("### 🔗 Quick Links")
