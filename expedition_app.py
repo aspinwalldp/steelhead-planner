@@ -5,6 +5,14 @@ import requests
 from datetime import timedelta
 import re
 import math
+import json
+
+with open("routes.json", "r") as f:
+    ROUTES = json.load(f)
+
+def get_saved_route(a, b):
+    key = "||".join(sorted([a, b]))
+    return ROUTES.get(key)
 
 # Optional: yfinance for live oil prices
 try:
@@ -1858,10 +1866,34 @@ if not df.empty:
         height=height
     )
 
-    # ===== MAP VIEW =====
-    import pydeck as pdk
+    
+# ===== MAP VIEW WITH OPENROUTESERVICE REALISTIC ROUTING =====
+import pydeck as pdk
+import math
+import requests
+import streamlit as st
+import certifi
 
-    st.subheader("🗺️ Map View")
+# NOTE:
+# The app now uses offline routing from routes.json.
+# The live ORS routing function is disabled but kept for reference.
+
+# ORS_KEY = st.secrets["eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijc0MzMyOGU0YjQ2NTQxMTdiYzU5YmNhMTZjMTEwNzBhIiwiaCI6Im11cm11cjY0In0="]
+
+# @st.cache_data(show_spinner=False)
+# def ors_route(p1, p2):
+#     url = "https://api.openrouteservice.org/v2/directions/driving-car"
+#     headers = {"Authorization": ORS_KEY}
+#     body = {"coordinates": [p1, p2]}
+#
+#     r = requests.post(url, json=body, headers=headers, verify=certifi.where())
+#     data = r.json()
+#
+#     return data["features"][0]["geometry"]["coordinates"]
+
+st.subheader("🗺️ Map View")
+
+with st.expander("Map View", expanded=True):
 
     # --- Build river dataframe ---
     river_rows = []
@@ -1875,34 +1907,43 @@ if not df.empty:
                     "lon": r["Lon"],
                     "region": region,
                     "score": score["total"],
-                    "flow": score["flow"],
-                    "trend": score["trend"],
-                    "weather": score["weather"],
-                    "base": score["base"]
+                    "label": r["Name"]   # used by TextLayer and tooltip
                 })
 
     df_rivers = pd.DataFrame(river_rows)
 
-    # --- Build hub dataframe ---
+    # --- River color scale (0 = bright red → 5 = bright green) ---
+    def river_color(score):
+        t = max(0, min(score / 5, 1))   # normalize 0–5 to 0–1
+        r = int(255 * (1 - t))          # red fades out
+        g = int(255 * t)                # green fades in
+        b = 0                           # remove muddy blue
+        return [r, g, b]
+
+    df_rivers["color"] = df_rivers["score"].apply(river_color)
+
+    # --- Build hub dataframe (Salt Lake & Home removed) ---
     hub_rows = []
     for hub, (lat, lon) in NODE_COORDS.items():
-        hub_rows.append({"hub": hub, "lat": lat, "lon": lon})
+        if hub not in ["Salt Lake", "Home"]:
+            hub_rows.append({
+                "hub": hub,
+                "lat": lat,
+                "lon": lon,
+                "label": hub   # ensures tooltip never shows {label}
+            })
 
     df_hubs = pd.DataFrame(hub_rows)
 
-    # --- Build itinerary polyline (robust version) ---
-    itinerary_coords = []
+    # --- Build itinerary hub sequence ---
+    travel_hubs = []
 
     for _, row in df.iterrows():
         raw = row["Location"]
 
-        # Remove prefixes
         loc = raw.replace("FISH ", "").replace("TRAVEL ", "").strip()
-
-        # Remove suffixes like "(CA)" or "(Main)"
         loc = loc.split("(")[0].strip()
 
-        # Normalize common patterns
         LOCATION_NORMALIZE = {
             "Eagle Lake": "Eagle",
             "Brookings, OR": "Brookings",
@@ -1911,81 +1952,90 @@ if not df.empty:
             "Camp": "",
             "Rest": "",
             "Drive": "",
-            "Home": "Home",
         }
 
-        # If first word is a known hub, use it
         first = loc.split()[0]
         if first in LOCATION_NORMALIZE:
             loc = LOCATION_NORMALIZE[first] or first
 
-        # Final lookup
-        if loc in NODE_COORDS:
-            lat, lon = NODE_COORDS[loc]
-            itinerary_coords.append([lon, lat])  # ✅ PathLayer requires [lon, lat]
+        if loc in NODE_COORDS and loc not in ["Salt Lake", "Home"]:
+            travel_hubs.append(loc)
 
-    # Ensure polyline always has at least 2 points
-    if len(itinerary_coords) < 2:
-        itinerary_coords = []
+    # Remove duplicates while preserving order
+    ordered_hubs = []
+    for h in travel_hubs:
+        if h not in ordered_hubs:
+            ordered_hubs.append(h)
 
-    df_route = pd.DataFrame([{"path": itinerary_coords}])
+    # --- Number hubs in travel order ---
+    hub_number_map = {hub: i+1 for i, hub in enumerate(ordered_hubs)}
 
-    # --- Color scale ---
-    def score_to_color(score):
-        t = max(0, min(score / 5, 1))
-        r = int(255 * t)
-        g = int(255 * (1 - t))
-        b = 100
-        return [r, g, b]
+    df_hubs["order"] = df_hubs["hub"].map(hub_number_map).astype("Int64")
+    df_hubs["order_label"] = df_hubs.apply(
+        lambda r: f"{int(r['order'])}. {r['hub']}" if pd.notnull(r["order"]) else r["hub"],
+        axis=1
+    )
 
-    df_rivers["color"] = df_rivers["score"].apply(score_to_color)
+    # --- Build offline realistic route segments ---
+    route_segments = []
+
+    for i in range(len(ordered_hubs) - 1):
+        h1 = ordered_hubs[i]
+        h2 = ordered_hubs[i+1]
+
+        polyline = get_saved_route(h1, h2)
+        route_segments.append({"path": polyline})
+
+    df_route = pd.DataFrame(route_segments)
 
     # --- Layers ---
     river_layer = pdk.Layer(
         "ScatterplotLayer",
         data=df_rivers,
         get_position=["lon", "lat"],
-        get_radius=5000,
+        get_radius=100,
+        radius_min_pixels=3,
+        radius_max_pixels=12,
         get_fill_color="color",
         pickable=True,
     )
 
-    hub_layer = pdk.Layer(
+    hub_dot_layer = pdk.Layer(
         "ScatterplotLayer",
         data=df_hubs,
         get_position=["lon", "lat"],
-        get_radius=7000,
-        get_fill_color=[0, 100, 255],
+        get_radius=100,
+        radius_min_pixels=4,
+        radius_max_pixels=10,
+        get_fill_color=[0, 0, 0],  # black hubs
         pickable=True,
+    )
+
+    river_label_layer = pdk.Layer(
+        "TextLayer",
+        data=df_rivers,
+        get_position=["lon", "lat"],
+        get_text="label",
+        get_color=[0, 0, 0],
+        get_size=14,
+        get_alignment_baseline="'top'",
+        get_pixel_offset=[0, -10],
     )
 
     route_layer = pdk.Layer(
         "PathLayer",
         data=df_route,
         get_path="path",
-        get_color=[0, 0, 0],
-        width_scale=50,
-        width_min_pixels=4,
+        get_color=[50, 50, 50],  # charcoal grey
+        width_scale=10,
+        width_min_pixels=1,
     )
 
-    # --- Tooltip ---
     tooltip = {
-        "html": """
-        {% if name %}
-            <b>{{name}}</b><br/>
-            Score: {{score}}<br/>
-            Flow: {{flow}}<br/>
-            Trend: {{trend}}<br/>
-            Weather: {{weather}}<br/>
-            Base: {{base}}
-        {% else %}
-            <b>{{hub}}</b>
-        {% endif %}
-        """,
+        "html": "<b>{label}</b>",
         "style": {"backgroundColor": "black", "color": "white"}
     }
 
-    # --- View ---
     view_state = pdk.ViewState(
         latitude=42.5,
         longitude=-123.5,
@@ -1993,10 +2043,9 @@ if not df.empty:
         pitch=30,
     )
 
-    # --- Render ---
     st.pydeck_chart(
         pdk.Deck(
-            layers=[river_layer, hub_layer, route_layer],
+            layers=[river_layer, hub_dot_layer, river_label_layer, route_layer],
             initial_view_state=view_state,
             tooltip=tooltip,
             map_style="light"
@@ -2134,6 +2183,8 @@ with st.expander("📉 Hydrographs", expanded=False):
                     f"https://waterdata.usgs.gov/nwisweb/graph?agency_cd=USGS&site_no={s}&parm_cd={p}&period=7",
                     use_container_width=True
                 )
+   
+
 
 # ===== 11. DEBUG PANEL =====
 
