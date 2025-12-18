@@ -304,12 +304,13 @@ REGION_RIVER_ORDER = {
 # ===== 2. LIVE INTEL & SCORING =====
 
 @st.cache_data(ttl=600)
-def get_usgs_series(site_id, param_code='00060', days=3):
-    """Fetch recent USGS flow data."""
+@st.cache_data(ttl=600)
+def get_usgs_series(site_id, param_code='00060', hours=8):
+    """Fetch recent USGS flow data for the last N hours."""
     try:
         url = (
             "https://waterservices.usgs.gov/nwis/iv/"
-            f"?format=json&sites={site_id}&parameterCd={param_code}&period=P{days}D"
+            f"?format=json&sites={site_id}&parameterCd={param_code}&period=PT{hours}H"
         )
         r = requests.get(url, timeout=6).json()
         ts_list = r.get('value', {}).get('timeSeries', [])
@@ -386,23 +387,47 @@ def compute_flow_index(value, low_limit, target_low, target_high):
         return 0.8 * max(0.0, min(frac, 1.0))
     return 0.0
 
-def compute_trend_bonus(series):
-    """Reward falling flows, penalize rising flows."""
+def compute_trend_bonus(series, last_val=None, t_low=None):
+    """
+    Trend bonus based on percent change over ~8 hours.
+    Rising is good when river is low; bad otherwise.
+    """
     if len(series) < 2:
         return 0.0
+
+    # Sort by timestamp
     series = sorted(series, key=lambda x: x[0])
-    last = series[-1][1]
-    prev = series[-2][1]
-    dt_hours = (series[-1][0] - series[-2][0]).total_seconds() / 3600 or 1
-    rate = (last - prev) / dt_hours
-    if rate <= -200:
+
+    first_val = series[0][1]
+    last_val_series = series[-1][1]
+
+    if first_val <= 0:
+        return 0.0
+
+    pct_change = ((last_val_series - first_val) / first_val) * 100.0
+
+    # If river is low, rising is GOOD
+    if last_val is not None and t_low is not None and last_val < t_low:
+        # Rising
+        if pct_change >= 8:
+            return 0.25
+        if 3 <= pct_change < 8:
+            return 0.1
+        # Falling
+        if pct_change <= -8:
+            return -0.25
+        return 0.0
+
+    # Normal behavior (in shape or blown out)
+    if pct_change <= -20:
         return 0.5
-    if -200 < rate <= -50:
+    if -20 < pct_change <= -8:
         return 0.25
-    if 50 <= rate < 200:
+    if 8 <= pct_change < 20:
         return -0.25
-    if rate >= 200:
+    if pct_change >= 20:
         return -0.5
+
     return 0.0
 
 def estimate_precip_for_river(river_name):
@@ -500,7 +525,7 @@ def auto_score_river(river_name, spec):
         }
 
     flow_idx = compute_flow_index(last_val, low_limit, t_low, t_high)
-    trend_bonus = compute_trend_bonus(series)
+    trend_bonus = compute_trend_bonus(series, last_val=last_val, t_low=t_low)
     precip_bonus = estimate_precip_for_river(river_name)
     type_bonus = river_type_bonus(river_name, flow_idx)
 
@@ -573,7 +598,7 @@ with st.sidebar:
                 name = r["Name"]
                 closed = r.get("Closed", False)
 
-                # Full score dict
+                # Compute score
                 score = auto_score_river(name, r)
                 auto_total = score["total"]
                 score_components[name] = score
@@ -586,9 +611,16 @@ with st.sidebar:
                     label += " [CLOSED]"
                     auto_total = 0.0
 
-                # Flow-closed indicator
-                if not closed and auto_total <= 0.01:
-                    label += " (⛔)"
+                # Flow-based blown-out symbol
+                try:
+                    t_low, t_high = parse_target_range(r["T"])
+                    latest_series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
+                    last_val = latest_series[-1][1] if latest_series else None
+
+                    if last_val is not None and last_val > t_high:
+                        label += " (⛔)"
+                except:
+                    pass
 
                 # Slider default
                 default_val = float(round(auto_total * 4) / 4.0)
@@ -602,16 +634,67 @@ with st.sidebar:
                     key=f"{name}_{st.session_state.reset_id}"
                 )
 
-                # Tiny scoring breakdown
+                # Condition tag for tiny text
+                condition = ""
+                try:
+                    t_low, t_high = parse_target_range(r["T"])
+                    low_limit = r.get("Low", 0)
+                    latest_series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
+                    last_val = latest_series[-1][1] if latest_series else None
+
+                    if last_val is not None:
+                        if last_val > t_high:
+                            condition = " (blown out)"
+                        elif last_val < low_limit:
+                            condition = " (below legal)"
+                        elif last_val < t_low:
+                            condition = " (low)"
+                except:
+                    pass
+
+                # --- Trend arrow + interpretation ---
+                trend_arrow = "↔"
+                trend_text = "stable"
+                trend_color = "#CCCCCC"  # default gray
+
+                try:
+                    series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
+                    if len(series) >= 2:
+                        first_val = series[0][1]
+                        last_val_series = series[-1][1]
+                        pct_change = ((last_val_series - first_val) / first_val) * 100.0
+
+                        if pct_change <= -20:
+                            trend_arrow = "↓↓"
+                            trend_text = "dropping fast"
+                            trend_color = "#2ECC71"
+                        elif -20 < pct_change <= -8:
+                            trend_arrow = "↓"
+                            trend_text = "dropping"
+                            trend_color = "#27AE60"
+                        elif 8 <= pct_change < 20:
+                            trend_arrow = "↑"
+                            trend_text = "rising"
+                            trend_color = "#E67E22"
+                        elif pct_change >= 20:
+                            trend_arrow = "↑↑"
+                            trend_text = "rising fast"
+                            trend_color = "#E74C3C"
+                except:
+                    pass
+
+                # --- Tiny scoring breakdown ---
                 breakdown = explain_river_score(region, name, score_components)
                 st.markdown(
                     f"<div style='font-size: 9px; line-height: 1.1; "
-                    f"margin-top: -6px; margin-bottom: 2px;'>"
+                    f"margin-top: -6px; margin-bottom: 2px; color:{trend_color};'>"
+                    f"{trend_arrow} {trend_text} | "
                     f"Flow: {breakdown['flow']:.1f} | "
-                    f"Trend: {breakdown['trend']:.1f} | "
-                    f"Base: {breakdown['base']:.1f} | "
-                    f"Total: {breakdown['total']:.2f}"
-                    f"</span>",
+                    f"Trend: {breakdown['trend']:.2f} | "
+                    f"Weather: {breakdown['weather']:.2f} | "
+                    f"Type: {breakdown['base']:.2f} | "
+                    f"Total: {breakdown['total']:.2f}{condition}"
+                    f"</div>",
                     unsafe_allow_html=True
                 )
 
@@ -666,7 +749,7 @@ with st.sidebar:
 * **Pyramid:** [Pyramid Fly Co](https://pyramidflyco.com/fishing-report/) | [Windy.com](https://www.windy.com/39.950/-119.600)
 * **Oregon:** [NOAA NW River Forecast](https://www.nwrfc.noaa.gov/rfc/) | [Ashland Fly Shop](https://www.ashlandflyshop.com/blogs/fishing-reports)
 * **OP:** [Waters West](https://waterswest.com/fishing-report/)
-"""
+        """
     )
 
 # ===== 4. REGION SCORING, ORDERING, AND ALLOCATION =====
@@ -2141,33 +2224,80 @@ with st.expander("🌊 Live River Levels", expanded=False):
             for reg, rivs in RIVER_SPECS.items():
                 st.markdown(f"**{reg}**")
                 cols = st.columns(4)
+
                 for i, r in enumerate(rivs):
                     with cols[i % 4]:
-                        series = get_usgs_series(r["ID"], r.get("P", "00060"), days=2)
+
+                        # --- Fetch USGS series (24–48 hours) ---
+                        series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=24)
                         val = series[-1][1] if series else None
                         ts = series[-1][0] if series else None
-                        col = "off"; s_icon = ""
+
+                        # default: no color, no icon
+                        col = "off"
+                        s_icon = ""
+
+                        # --- Flow condition classification ---
                         try:
                             mn = float(r["T"].split("-")[0])
                             mx = float(r["T"].split("-")[1].split()[0])
-                            low = r.get("Low", 0)
+                            reg_closed = r.get("Closed", False)
+
                             if val is not None:
-                                if val < low:
-                                    col = "inverse"; s_icon = "⛔"
-                                elif val < mn:
-                                    col = "off"; s_icon = "🟡"
+                                if reg_closed:
+                                    col = "inverse"
+                                    s_icon = "⛔"
                                 elif val > mx:
-                                    col = "inverse"; s_icon = "🔴"
+                                    col = "inverse"
+                                    s_icon = "🔴"
+                                elif val < mn:
+                                    col = "off"
+                                    s_icon = "🟡"
                                 else:
-                                    col = "normal"; s_icon = "🟢"
+                                    col = "normal"
+                                    s_icon = "🟢"
                         except:
                             pass
+
+                        # --- Display main metric ---
                         ts_display = ts.astimezone().strftime("%m-%d %H:%M") if ts else ""
-                        st.metric(f"{s_icon} {r['Name']}", val if val is not None else "--", r["T"], delta_color=col)
-                        if ts_display:
-                            st.caption(f"{r['N']} | {ts_display}")
-                        else:
-                            st.caption(r["N"])
+                        st.metric(
+                            f"{s_icon} {r['Name']}",
+                            val if val is not None else "--",
+                            r["T"],
+                            delta_color=col
+                        )
+
+                        # --- Confidence indicator ---
+                        try:
+                            pts = len(series)
+                            if pts < 4:
+                                confidence = "Low"
+                            elif pts < 12:
+                                confidence = "Medium"
+                            else:
+                                confidence = "High"
+                        except:
+                            confidence = "Low"
+
+                        st.caption(f"{r['N']} | {ts_display} | Confidence: {confidence}")
+
+	                          # --- Directional bar chart (up/down arrows) ---
+                        try:
+                            values = [v for (_, v) in series]
+                            if len(values) >= 2:
+                                bar = ""
+                                for a, b in zip(values[-10:], values[-9:]):
+                                    if b > a:
+                                        bar += "📈"
+                                    elif b < a:
+                                        bar += "📉"
+                                    else:
+                                        bar += "🟨"
+                                st.caption(f"24h Trend: {bar}")
+                        except:
+                            pass
+
 
 with st.expander("📉 Hydrographs", expanded=False):
     if st.button("Load Charts"):
