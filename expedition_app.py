@@ -7,29 +7,46 @@ import re
 import math
 import json
 
+# --- STREAMLIT CONFIG ---
+st.set_page_config(
+    page_title="Steelhead Navigator",
+    layout="wide",
+    page_icon="🧭"
+)
+
+# --- MODE SELECTOR (top-level) ---
+mode = st.radio(
+    "Choose Mode:",
+    ["Planner", "Coastal Dashboard"],
+    index=0,
+    horizontal=True
+)
+
+# --- LOAD ROUTES FOR OFFLINE MAP ROUTING ---
 with open("routes.json", "r") as f:
     ROUTES = json.load(f)
+
 
 def get_saved_route(a, b):
     key = "||".join(sorted([a, b]))
     return ROUTES.get(key)
 
-# Optional: yfinance for live oil prices
+
+# --- OPTIONAL: yfinance for live oil prices ---
 try:
     import yfinance as yf
 except ImportError:
     yf = None
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Steelhead Navigator", layout="wide", page_icon="🧭")
-
-# Reset logic
-if 'reset_id' not in st.session_state:
+# --- RESET LOGIC ---
+if "reset_id" not in st.session_state:
     st.session_state.reset_id = 0
+
 
 def trigger_reset():
     st.session_state.reset_id += 1
-    st.experimental_rerun()
+    st.rerun()
+
 
 # ===== 1. DATA & METADATA =====
 
@@ -203,6 +220,7 @@ RIVER_SPECS = {
         }
     ]
 }
+
 RIVER_PRIORITY = {
     "NorCal": ["Smith River (CA)", "SF Eel", "Van Duzen", "Eel (Main)"],
     "Oregon": ["Chetco", "Elk River", "Sixes River", "N. Umpqua", "Rogue", "Umpqua (Main)"],
@@ -304,7 +322,6 @@ REGION_RIVER_ORDER = {
 # ===== 2. LIVE INTEL & SCORING =====
 
 @st.cache_data(ttl=600)
-@st.cache_data(ttl=600)
 def get_usgs_series(site_id, param_code='00060', hours=8):
     """Fetch recent USGS flow data for the last N hours."""
     try:
@@ -333,6 +350,7 @@ def get_usgs_series(site_id, param_code='00060', hours=8):
     except:
         return []
 
+
 @st.cache_data(ttl=600)
 def get_oil_price():
     """Fetch WTI crude price for gas adjustment."""
@@ -343,13 +361,14 @@ def get_oil_price():
             pass
     return 70.0
 
+
 @st.cache_data(ttl=3600)
 def get_nws_forecast_data(lat, lon):
     """Fetch NOAA weather forecast periods."""
     try:
         h = {"User-Agent": "(steelhead-navigator)"}
         r = requests.get(
-            f"https://api.weather.gov/points/{round(lat,4)},{round(lon,4)}",
+            f"https://api.weather.gov/points/{round(lat, 4)},{round(lon, 4)}",
             headers=h,
             timeout=6
         ).json()
@@ -361,6 +380,7 @@ def get_nws_forecast_data(lat, lon):
     except:
         return None
 
+
 def parse_target_range(target_str):
     """Parse 'low-high units' into floats."""
     try:
@@ -371,6 +391,7 @@ def parse_target_range(target_str):
     except:
         return None, None
 
+
 def compute_flow_index(value, low_limit, target_low, target_high):
     """Convert flow into a normalized 0–1 index."""
     if value < low_limit:
@@ -378,7 +399,8 @@ def compute_flow_index(value, low_limit, target_low, target_high):
     if target_low is None or target_high is None or target_low <= 0 or target_high <= 0:
         return 0.6
     if value < target_low:
-        frac = (value - low_limit) / (target_low - low_limit) if target_low != low_limit else 0
+        frac = (value - low_limit) / (target_low -
+                low_limit) if target_low != low_limit else 0
         return 0.2 + 0.4 * max(0.0, min(frac, 1.0))
     if target_low <= value <= target_high:
         return 1.0
@@ -386,6 +408,7 @@ def compute_flow_index(value, low_limit, target_low, target_high):
         frac = (2 * target_high - value) / target_high
         return 0.8 * max(0.0, min(frac, 1.0))
     return 0.0
+
 
 def compute_trend_bonus(series, last_val=None, t_low=None):
     """
@@ -395,9 +418,7 @@ def compute_trend_bonus(series, last_val=None, t_low=None):
     if len(series) < 2:
         return 0.0
 
-    # Sort by timestamp
     series = sorted(series, key=lambda x: x[0])
-
     first_val = series[0][1]
     last_val_series = series[-1][1]
 
@@ -408,12 +429,10 @@ def compute_trend_bonus(series, last_val=None, t_low=None):
 
     # If river is low, rising is GOOD
     if last_val is not None and t_low is not None and last_val < t_low:
-        # Rising
         if pct_change >= 8:
             return 0.25
         if 3 <= pct_change < 8:
             return 0.1
-        # Falling
         if pct_change <= -8:
             return -0.25
         return 0.0
@@ -429,6 +448,7 @@ def compute_trend_bonus(series, last_val=None, t_low=None):
         return -0.5
 
     return 0.0
+
 
 def estimate_precip_for_river(river_name):
     """Estimate precipitation impact based on NOAA text."""
@@ -466,6 +486,7 @@ def estimate_precip_for_river(river_name):
 
     return 0.0
 
+
 def river_type_bonus(river_name, index):
     """Adjust score based on river type behavior."""
     rtype = RIVER_TYPE.get(river_name, "generic")
@@ -486,9 +507,9 @@ def river_type_bonus(river_name, index):
             return -0.5
     return 0.0
 
+
 def auto_score_river(river_name, spec):
     """Compute the auto-score for a river."""
-    # Hard closure override
     if spec.get("Closed", False):
         return {
             "total": 0.0,
@@ -505,7 +526,6 @@ def auto_score_river(river_name, spec):
 
     series = get_usgs_series(site_id, param)
     if not series:
-        # fallback: total=2.5, components unknown → set to 0
         return {
             "total": 2.5,
             "flow": 0.0,
@@ -539,1800 +559,2392 @@ def auto_score_river(river_name, spec):
         "weather": precip_bonus,
         "base": type_bonus
     }
+# ===== 3. SIDEBAR — PLANNER MODE =====
+if mode == "Planner":
+    with st.container():
+        st.title("Steelhead Trip Planner 🧭")
 
-# ===== 3. SIDEBAR =====
+        def explain_river_score(region, river_name, score_components):
+            return score_components.get(river_name, {
+                "flow": 0.0,
+                "trend": 0.0,
+                "weather": 0.0,
+                "base": 0.0,
+                "total": 0.0
+            })
 
-st.title("Steelhead Trip Planner 🧭")
+        # --- SIDEBAR ---
+        with st.sidebar:
+            st.header("🎛️ Mission Controls")
 
-def explain_river_score(region, river_name, score_components):
-    """Return the real scoring breakdown from auto_score_river."""
-    return score_components.get(river_name, {
-        "flow": 0.0,
-        "trend": 0.0,
-        "weather": 0.0,
-        "base": 0.0,
-        "total": 0.0
-    })
+            # --- Timeline ---
+            with st.expander("📅 Timeline", expanded=False):
+                start_date = st.date_input(
+                    "Departure",
+                    datetime.date(2026, 1, 1),
+                    key="date_start"
+                )
+                end_date = st.date_input(
+                    "Return By",
+                    datetime.date(2026, 1, 17),
+                    key="date_end"
+                )
+                total_trip_days = (end_date - start_date).days + 1
+                if total_trip_days < 1:
+                    total_trip_days = 1
+                st.caption(f"Trip Duration: {total_trip_days} Days")
 
-with st.sidebar:
-    st.header("🎛️ Mission Controls")
+            # --- Ratings ---
+            ratings = {}
+            score_components = {}
 
-    # --- Timeline ---
-    with st.expander("📅 Timeline", expanded=False):
-        start_date = st.date_input(
-            "Departure",
-            datetime.date(2026, 1, 1),
-            key="date_start"
-        )
-        end_date = st.date_input(
-            "Return By",
-            datetime.date(2026, 1, 17),
-            key="date_end"
-        )
-        total_trip_days = (end_date - start_date).days + 1
-        if total_trip_days < 1:
-            total_trip_days = 1
-        st.caption(f"Trip Duration: {total_trip_days} Days")
+            with st.expander("🌊 River Ratings", expanded=True):
+                st.caption("Auto-scored from flows, trends, and forecast.")
 
-    # --- Ratings ---
-    ratings = {}
-    score_components = {}
+                # ✅ Pyramid Lake collapsed by default
+                with st.expander("Pyramid Lake (manual rating)", expanded=False):
+                    ratings["Pyramid"] = st.slider(
+                        "Pyramid Rating",
+                        0.0, 5.0,
+                        3.5,
+                        0.25,
+                        key=f"Pyramid_{st.session_state.reset_id}"
+                    )
 
-    with st.expander("🌊 River Ratings", expanded=True):
-        st.caption("Auto-scored from flows, trends, and forecast.")
+                # Regional rivers
+                for region, rivers in RIVER_SPECS.items():
+                    st.markdown(f"**{region}**")
 
-        # Pyramid manual slider
-        ratings["Pyramid"] = st.slider(
-            "Pyramid (manual)",
-            0.0, 5.0,
-            3.5,
-            0.25,
-            key=f"Pyramid_{st.session_state.reset_id}"
-        )
+                    for r in rivers:
+                        name = r["Name"]
+                        closed = r.get("Closed", False)
 
-        # Regional rivers
-        for region, rivers in RIVER_SPECS.items():
-            st.markdown(f"**{region}**")
+                        # Compute auto score
+                        score = auto_score_river(name, r)
+                        auto_total = score["total"]
+                        score_components[name] = score
 
-            for r in rivers:
-                name = r["Name"]
-                closed = r.get("Closed", False)
+                        label = name.split('(')[0].strip()
 
-                # Compute score
-                score = auto_score_river(name, r)
-                auto_total = score["total"]
-                score_components[name] = score
+                        # Regulatory closure
+                        if closed:
+                            label += " [CLOSED]"
+                            auto_total = 0.0
 
-                # Base label
-                label = name.split('(')[0].strip()
+                        # Blown-out indicator
+                        try:
+                            t_low, t_high = parse_target_range(r["T"])
+                            latest_series = get_usgs_series(
+                                r["ID"], r.get("P", "00060"), hours=8)
+                            last_val = latest_series[-1][1] if latest_series else None
+                            if last_val is not None and last_val > t_high:
+                                label += " (⛔)"
+                        except:
+                            pass
 
-                # Regulatory closure
-                if closed:
-                    label += " [CLOSED]"
-                    auto_total = 0.0
+                        # Slider default
+                        default_val = float(round(auto_total * 4) / 4.0)
 
-                # Flow-based blown-out symbol
-                try:
-                    t_low, t_high = parse_target_range(r["T"])
-                    latest_series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
-                    last_val = latest_series[-1][1] if latest_series else None
+                        ratings[name] = st.slider(
+                            label,
+                            0.0,
+                            5.0,
+                            default_val,
+                            0.25,
+                            key=f"{name}_{st.session_state.reset_id}"
+                        )
 
-                    if last_val is not None and last_val > t_high:
-                        label += " (⛔)"
-                except:
-                    pass
+                        # Condition tag
+                        condition = ""
+                        try:
+                            t_low, t_high = parse_target_range(r["T"])
+                            low_limit = r.get("Low", 0)
+                            latest_series = get_usgs_series(
+                                r["ID"], r.get("P", "00060"), hours=8)
+                            last_val = latest_series[-1][1] if latest_series else None
 
-                # Slider default
-                default_val = float(round(auto_total * 4) / 4.0)
+                            if last_val is not None:
+                                if last_val > t_high:
+                                    condition = " (blown out)"
+                                elif last_val < low_limit:
+                                    condition = " (below legal)"
+                                elif last_val < t_low:
+                                    condition = " (low)"
+                        except:
+                            pass
 
-                ratings[name] = st.slider(
-                    label,
-                    0.0,
+                        # Trend arrow
+                        trend_arrow = "↔"
+                        trend_text = "stable"
+                        trend_color = "#CCCCCC"
+
+                        try:
+                            series = get_usgs_series(
+                                r["ID"], r.get("P", "00060"), hours=8)
+                            if len(series) >= 2:
+                                first_val = series[0][1]
+                                last_val_series = series[-1][1]
+                                pct_change = ((last_val_series - first_val) / first_val) * 100.0
+
+                                if pct_change <= -20:
+                                    trend_arrow = "↓↓"
+                                    trend_text = "dropping fast"
+                                    trend_color = "#2ECC71"
+                                elif -20 < pct_change <= -8:
+                                    trend_arrow = "↓"
+                                    trend_text = "dropping"
+                                    trend_color = "#27AE60"
+                                elif 8 <= pct_change < 20:
+                                    trend_arrow = "↑"
+                                    trend_text = "rising"
+                                    trend_color = "#E67E22"
+                                elif pct_change >= 20:
+                                    trend_arrow = "↑↑"
+                                    trend_text = "rising fast"
+                                    trend_color = "#E74C3C"
+                        except:
+                            pass
+
+                        # Tiny scoring breakdown
+                        breakdown = explain_river_score(region, name, score_components)
+                        st.markdown(
+                            f"<div style='font-size: 9px; line-height: 1.1; "
+                            f"margin-top: -6px; margin-bottom: 2px; color:{trend_color};'>"
+                            f"{trend_arrow} {trend_text} | "
+                            f"Flow: {breakdown['flow']:.1f} | "
+                            f"Trend: {breakdown['trend']:.2f} | "
+                            f"Weather: {breakdown['weather']:.2f} | "
+                            f"Type: {breakdown['base']:.2f} | "
+                            f"Total: {breakdown['total']:.2f}{condition}"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+            # --- Logistics ---
+            with st.expander("⚙️ Logistics", expanded=False):
+                mpg = st.number_input(
+                    "MPG",
                     5.0,
-                    default_val,
-                    0.25,
-                    key=f"{name}_{st.session_state.reset_id}"
+                    40.0,
+                    23.5,
+                    0.1,
+                    key=f"mpg_{st.session_state.reset_id}"
                 )
-
-                # Condition tag for tiny text
-                condition = ""
-                try:
-                    t_low, t_high = parse_target_range(r["T"])
-                    low_limit = r.get("Low", 0)
-                    latest_series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
-                    last_val = latest_series[-1][1] if latest_series else None
-
-                    if last_val is not None:
-                        if last_val > t_high:
-                            condition = " (blown out)"
-                        elif last_val < low_limit:
-                            condition = " (below legal)"
-                        elif last_val < t_low:
-                            condition = " (low)"
-                except:
-                    pass
-
-                # --- Trend arrow + interpretation ---
-                trend_arrow = "↔"
-                trend_text = "stable"
-                trend_color = "#CCCCCC"  # default gray
-
-                try:
-                    series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=8)
-                    if len(series) >= 2:
-                        first_val = series[0][1]
-                        last_val_series = series[-1][1]
-                        pct_change = ((last_val_series - first_val) / first_val) * 100.0
-
-                        if pct_change <= -20:
-                            trend_arrow = "↓↓"
-                            trend_text = "dropping fast"
-                            trend_color = "#2ECC71"
-                        elif -20 < pct_change <= -8:
-                            trend_arrow = "↓"
-                            trend_text = "dropping"
-                            trend_color = "#27AE60"
-                        elif 8 <= pct_change < 20:
-                            trend_arrow = "↑"
-                            trend_text = "rising"
-                            trend_color = "#E67E22"
-                        elif pct_change >= 20:
-                            trend_arrow = "↑↑"
-                            trend_text = "rising fast"
-                            trend_color = "#E74C3C"
-                except:
-                    pass
-
-                # --- Tiny scoring breakdown ---
-                breakdown = explain_river_score(region, name, score_components)
-                st.markdown(
-                    f"<div style='font-size: 9px; line-height: 1.1; "
-                    f"margin-top: -6px; margin-bottom: 2px; color:{trend_color};'>"
-                    f"{trend_arrow} {trend_text} | "
-                    f"Flow: {breakdown['flow']:.1f} | "
-                    f"Trend: {breakdown['trend']:.2f} | "
-                    f"Weather: {breakdown['weather']:.2f} | "
-                    f"Type: {breakdown['base']:.2f} | "
-                    f"Total: {breakdown['total']:.2f}{condition}"
-                    f"</div>",
-                    unsafe_allow_html=True
+                tank = st.number_input(
+                    "Range (miles per tank)",
+                    200,
+                    600,
+                    400,
+                    key=f"tank_{st.session_state.reset_id}"
                 )
+                live_wti = get_oil_price()
+                st.metric("Live WTI", f"${live_wti:.2f}")
+                oil_factor = live_wti / 70.0
+                oil_adj_slider = st.slider(
+                    "Gas Price Adjustment",
+                    -0.5,
+                    0.5,
+                    0.0,
+                    0.05,
+                    key=f"oil_adj_{st.session_state.reset_id}"
+                )
+                NODES = {
+                    loc: {"gas": BASE_GAS_PRICES[loc] * oil_factor + oil_adj_slider}
+                    for loc in BASE_GAS_PRICES
+                }
 
-    # --- Logistics ---
-    with st.expander("⚙️ Logistics", expanded=False):
-        mpg = st.number_input(
-            "MPG",
-            5.0,
-            40.0,
-            23.5,
-            0.1,
-            key=f"mpg_{st.session_state.reset_id}"
-        )
-        tank = st.number_input(
-            "Range (miles per tank)",
-            200,
-            600,
-            400,
-            key=f"tank_{st.session_state.reset_id}"
-        )
-        live_wti = get_oil_price()
-        st.metric("Live WTI", f"${live_wti:.2f}")
-        oil_factor = live_wti / 70.0
-        oil_adj_slider = st.slider(
-            "Gas Price Adjustment",
-            -0.5,
-            0.5,
-            0.0,
-            0.05,
-            key=f"oil_adj_{st.session_state.reset_id}"
-        )
-        NODES = {
-            loc: {"gas": BASE_GAS_PRICES[loc] * oil_factor + oil_adj_slider}
-            for loc in BASE_GAS_PRICES
-        }
+            # --- Veto options ---
+            with st.expander("🚫 Veto Options", expanded=False):
+                v_pyr = st.checkbox("Veto Pyramid", key=f"v_pyr_{st.session_state.reset_id}")
+                v_norcal = st.checkbox("Veto NorCal", key=f"v_norcal_{st.session_state.reset_id}")
+                v_ore = st.checkbox("Veto Oregon", key=f"v_ore_{st.session_state.reset_id}")
+                v_op = st.checkbox("Veto OP", key=f"v_op_{st.session_state.reset_id}")
+                vetoes = {
+                    "Pyramid": v_pyr,
+                    "NorCal": v_norcal,
+                    "Oregon": v_ore,
+                    "OP": v_op
+                }
 
-    # --- Veto options ---
-    with st.expander("Veto Options", expanded=False):
-        v_pyr = st.checkbox("Veto Pyramid", key=f"v_pyr_{st.session_state.reset_id}")
-        v_norcal = st.checkbox("Veto NorCal", key=f"v_norcal_{st.session_state.reset_id}")
-        v_ore = st.checkbox("Veto Oregon", key=f"v_ore_{st.session_state.reset_id}")
-        v_op = st.checkbox("Veto OP", key=f"v_op_{st.session_state.reset_id}")
-        vetoes = {"Pyramid": v_pyr, "NorCal": v_norcal, "Oregon": v_ore, "OP": v_op}
+            st.button("Reset Planner", on_click=trigger_reset)
 
-    st.button("Reset Planner", on_click=trigger_reset)
+            st.divider()
+            st.markdown("### 🔗 Quick Links")
+            st.markdown(
+                """
+        * **NorCal:** [Fishing the North Coast](https://fishingthenorthcoast.com/) | [The Fly Shop](https://www.theflyshop.com/stream-report) | [NOAA River Forecast](https://www.cnrfc.noaa.gov/)
+        * **Pyramid:** [Pyramid Fly Co](https://pyramidflyco.com/fishing-report/) | [Windy.com](https://www.windy.com/39.950/-119.600)
+        * **Oregon:** [NOAA NW River Forecast](https://www.nwrfc.noaa.gov/rfc/) | [Ashland Fly Shop](https://www.ashlandflyshop.com/blogs/fishing-reports)
+        * **OP:** [Waters West](https://waterswest.com/fishing-report/)
+                """
+            )        # ===== 4. REGION SCORING, ORDERING, AND ALLOCATION =====
 
-    st.divider()
-    st.markdown("### 🔗 Quick Links")
-    st.markdown(
-        """
-* **NorCal:** [Fishing the North Coast](https://fishingthenorthcoast.com/) | [The Fly Shop](https://www.theflyshop.com/stream-report) | [NOAA River Forecast](https://www.cnrfc.noaa.gov/)
-* **Pyramid:** [Pyramid Fly Co](https://pyramidflyco.com/fishing-report/) | [Windy.com](https://www.windy.com/39.950/-119.600)
-* **Oregon:** [NOAA NW River Forecast](https://www.nwrfc.noaa.gov/rfc/) | [Ashland Fly Shop](https://www.ashlandflyshop.com/blogs/fishing-reports)
-* **OP:** [Waters West](https://waterswest.com/fishing-report/)
-        """
-    )
+        def get_rivers_sorted(region, ratings, vetoes):
+            """
+            Returns a list of rivers in a region, sorted by rating, excluding:
+              - Closed rivers
+              - Region-level vetoes
+              - Rivers with zero or negative ratings
+            """
+            if vetoes.get(region, False):
+                return []
 
-# ===== 4. REGION SCORING, ORDERING, AND ALLOCATION =====
+            candidates = RIVER_PRIORITY.get(region, [])
+            scored = []
 
-def get_rivers_sorted(region, ratings, vetoes):
-    """
-    Returns a list of rivers in a region, sorted by rating, excluding:
-      - Closed rivers
-      - Region-level vetoes
-      - Rivers with zero or negative ratings
-    """
-    if vetoes.get(region, False):
-        return []
+            for r in candidates:
+                spec = None
+                for rv in RIVER_SPECS.get(region, []):
+                    if rv["Name"] == r:
+                        spec = rv
+                        break
 
-    candidates = RIVER_PRIORITY.get(region, [])
-    scored = []
+                if spec and spec.get("Closed", False):
+                    continue
 
-    for r in candidates:
-        # Find spec
-        spec = None
-        for rv in RIVER_SPECS.get(region, []):
-            if rv["Name"] == r:
-                spec = rv
+                s = float(ratings.get(r, 0.0))
+                if s > 0:
+                    scored.append((r, s))
+
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return [r for r, s in scored]
+
+        def score_region(region, ratings, vetoes):
+            """Region score = sum of top 2 river ratings."""
+            rivers = get_rivers_sorted(region, ratings, vetoes)
+            if not rivers:
+                return 0.0
+            top = rivers[:2]
+            return sum(ratings.get(r, 0.0) for r in top)
+
+        def get_order_index(region, river, candidate_set=None):
+            """Index of river in south→north order."""
+            base_order = REGION_RIVER_ORDER.get(region, [])
+            if candidate_set is not None:
+                order = [r for r in base_order if r in candidate_set]
+            else:
+                order = base_order
+            try:
+                return order.index(river)
+            except ValueError:
+                return None
+
+        def build_directional_river_sequence(region, ratings, vetoes, days_needed):
+            """
+            Directional sequencing for NorCal + Oregon:
+              - Start at highest-rated river
+              - Move directionally
+              - Reverse only if gain >= 0.5
+            """
+            candidates = get_rivers_sorted(region, ratings, vetoes)
+            if not candidates or days_needed <= 0:
+                return []
+
+            candidate_set = set(candidates)
+            rated = sorted(
+                [(r, ratings.get(r, 0.0)) for r in candidates],
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            anchor_river = rated[0][0]
+            sequence = [anchor_river]
+            used = {anchor_river}
+
+            def idx(r):
+                return get_order_index(region, r, candidate_set=candidate_set)
+
+            anchor_idx = idx(anchor_river)
+            higher = [r for r, s in rated[1:] if idx(r) is not None and idx(r) > anchor_idx]
+            lower = [r for r, s in rated[1:] if idx(r) is not None and idx(r) < anchor_idx]
+            direction = +1 if len(higher) >= len(lower) else -1
+
+            while len(sequence) < days_needed and len(used) < len(candidates):
+                current = sequence[-1]
+                current_idx = idx(current)
+                current_score = ratings.get(current, 0.0)
+
+                forward = []
+                reverse = []
+
+                for r, s in rated:
+                    if r in used:
+                        continue
+                    r_idx = idx(r)
+                    if r_idx is None or current_idx is None:
+                        continue
+                    delta = r_idx - current_idx
+
+                    if (delta > 0 and direction == +1) or (delta < 0 and direction == -1):
+                        forward.append((r, s))
+                    else:
+                        reverse.append((r, s))
+
+                if forward:
+                    forward.sort(key=lambda x: x[1], reverse=True)
+                    next_river = forward[0][0]
+                    sequence.append(next_river)
+                    used.add(next_river)
+                    continue
+
+                if reverse:
+                    reverse.sort(key=lambda x: x[1], reverse=True)
+                    best_rev, best_score = reverse[0]
+                    if best_score >= current_score + 0.5:
+                        sequence.append(best_rev)
+                        used.add(best_rev)
+                        direction *= -1
+                        continue
+
                 break
 
-        # Skip regulatory closures
-        if spec and spec.get("Closed", False):
-            continue
+            return sequence
 
-        s = float(ratings.get(r, 0.0))
-        if s > 0:
-            scored.append((r, s))
+        def allocate_rivers_in_region(region, days_allocated, ratings, vetoes):
+            """
+            Returns a list of rivers to fish in this region, using directional
+            logic when REGION_RIVER_ORDER is defined for that region.
+            """
+            if days_allocated <= 0:
+                return []
 
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [r for r, s in scored]
+            if region in REGION_RIVER_ORDER:
+                seq = build_directional_river_sequence(region, ratings, vetoes, days_allocated)
+                return seq[:days_allocated]
 
+            rivers = get_rivers_sorted(region, ratings, vetoes)
+            return rivers[:days_allocated]
 
-def score_region(region, ratings, vetoes):
-    """Region score = sum of top 2 river ratings."""
-    rivers = get_rivers_sorted(region, ratings, vetoes)
-    if not rivers:
-        return 0.0
-    top = rivers[:2]
-    return sum(ratings.get(r, 0.0) for r in top)
+        def allocate_days(total_days, region_seq, ratings, vetoes):
+            """
+            Deacon allocation model:
+              - Pyramid: 3 days if >=3.5, 2 days if >=3.25, else 1
+              - OP: must have >=2 days or excluded
+              - Coast collapse: if all coastal <1.0, dump into Pyramid
+              - Otherwise: min 1 day each coastal region (OP min 2)
+              - Ensure second-best coastal region gets >=2 days
+              - Remaining days go to best coastal region
+            """
+            if total_days <= 0 or not region_seq:
+                return {}
 
+            regions = [r for r in region_seq if r != "Eagle"]
+            scores = {r: score_region(r, ratings, vetoes) for r in regions}
 
-def get_order_index(region, river, candidate_set=None):
-    """Index of river in south→north order."""
-    base_order = REGION_RIVER_ORDER.get(region, [])
-    if candidate_set is not None:
-        order = [r for r in base_order if r in candidate_set]
-    else:
-        order = base_order
+            coastal_regs = [r for r in regions if r in ["NorCal", "Oregon", "OP"]]
+            coastal_scores = {r: scores.get(r, 0.0) for r in coastal_regs}
+            pyr_rating = scores.get("Pyramid", 0.0)
 
-    try:
-        return order.index(river)
-    except ValueError:
-        return len(order)
+            alloc = {}
+            for reg in regions:
+                if reg == "Pyramid":
+                    if pyr_rating >= 3.5:
+                        alloc[reg] = 3
+                    elif pyr_rating >= 3.25:
+                        alloc[reg] = 2
+                    else:
+                        alloc[reg] = 1
+                elif reg == "OP":
+                    alloc[reg] = 2
+                else:
+                    alloc[reg] = 1
 
+            if coastal_regs and max(coastal_scores.values()) < 1.0:
+                used = sum(alloc.values())
+                remaining = total_days - used
+                if remaining > 0:
+                    if "Pyramid" in alloc:
+                        alloc["Pyramid"] += remaining
+                    else:
+                        best = max(scores.keys(), key=lambda r: scores[r])
+                        alloc[best] += remaining
+                return alloc
 
-def build_directional_river_sequence(region, ratings, vetoes, days_needed):
-    """
-    Directional sequencing for NorCal + Oregon:
-      - Start at highest-rated river
-      - Move directionally
-      - Reverse only if gain >= 0.5
-    """
-    candidates = get_rivers_sorted(region, ratings, vetoes)
-    if not candidates or days_needed <= 0:
-        return []
+            if "OP" in regions:
+                used = sum(alloc.values())
+                remaining = total_days - used
+                if alloc["OP"] + max(remaining, 0) < 2:
+                    total_days += alloc["OP"]
+                    del alloc["OP"]
+                    regions.remove("OP")
+                    coastal_regs = [r for r in coastal_regs if r != "OP"]
+                    coastal_scores = {r: scores.get(r, 0.0) for r in coastal_regs}
 
-    candidate_set = set(candidates)
-    rated = sorted(
-        [(r, ratings.get(r, 0.0)) for r in candidates],
-        key=lambda x: x[1],
-        reverse=True
-    )
+            used = sum(alloc.values())
+            remaining = total_days - used
 
-    anchor_river = rated[0][0]
-    sequence = [anchor_river]
-    used = {anchor_river}
+            if remaining < 0:
+                for reg in sorted(alloc.keys(), key=lambda r: scores.get(r, 0.0)):
+                    if remaining == 0:
+                        break
+                    min_allowed = (
+                        3 if reg == "Pyramid" and pyr_rating >= 3.5 else
+                        2 if (reg == "Pyramid" and pyr_rating >= 3.25) or reg == "OP" else
+                        1
+                    )
+                    while alloc[reg] > min_allowed and remaining < 0:
+                        alloc[reg] -= 1
+                        remaining += 1
+                return alloc
 
-    def idx(r):
-        return get_order_index(region, r, candidate_set=candidate_set)
+            if remaining == 0:
+                return alloc
 
-    anchor_idx = idx(anchor_river)
-    higher = [r for r, s in rated[1:] if idx(r) > anchor_idx]
-    lower = [r for r, s in rated[1:] if idx(r) < anchor_idx]
-    direction = +1 if len(higher) >= len(lower) else -1
+            coastal_nonempty = {r: s for r, s in coastal_scores.items() if r in alloc}
+            if coastal_nonempty:
+                ranked = sorted(
+                    coastal_nonempty.keys(),
+                    key=lambda r: coastal_nonempty[r],
+                    reverse=True
+                )
+                best = ranked[0]
+                second = ranked[1] if len(ranked) > 1 else None
 
-    while len(sequence) < days_needed and len(used) < len(candidates):
-        current = sequence[-1]
-        current_idx = idx(current)
-        current_score = ratings.get(current, 0.0)
-
-        forward = []
-        reverse = []
-
-        for r, s in rated:
-            if r in used:
-                continue
-            r_idx = idx(r)
-            delta = r_idx - current_idx
-
-            if (delta > 0 and direction == +1) or (delta < 0 and direction == -1):
-                forward.append((r, s))
-            else:
-                reverse.append((r, s))
-
-        if forward:
-            forward.sort(key=lambda x: x[1], reverse=True)
-            next_river = forward[0][0]
-            sequence.append(next_river)
-            used.add(next_river)
-            continue
-
-        if reverse:
-            reverse.sort(key=lambda x: x[1], reverse=True)
-            best_rev, best_score = reverse[0]
-            if best_score >= current_score + 0.5:
-                sequence.append(best_rev)
-                used.add(best_rev)
-                direction *= -1
-                continue
-
-        break
-
-    return sequence
-
-
-def allocate_rivers_in_region(region, days_allocated, ratings, vetoes):
-    """
-    Returns a list of rivers to fish in this region, ordered by rating,
-    filtered by dynamic threshold logic:
-      - Best ≥ 4.0 → threshold = 1.0
-      - Best 3.5–4.0 → threshold = 0.75
-      - Best 2.5–3.0 → threshold = 0.5
-      - Best < 2.5 → threshold = 0.25
-
-    Only rivers within threshold of the best are included.
-    Stops at the first river that fails the threshold test.
-    """
-
-    # Get all rivers for this region
-    rivers = REGION_TO_RIVERS.get(region, [])
-
-    # Filter out vetoed rivers
-    rivers = [r for r in rivers if not vetoes.get(r, False)]
-
-    if not rivers:
-        return []
-
-    # Sort by rating (descending)
-    rivers_sorted = sorted(rivers, key=lambda r: ratings.get(r, 0), reverse=True)
-
-    best_river = rivers_sorted[0]
-    best_rating = ratings.get(best_river, 0)
-
-    # Determine threshold
-    if best_rating >= 4.0:
-        threshold = 1.0
-    elif best_rating >= 3.5:
-        threshold = 0.75
-    elif best_rating >= 2.5:
-        threshold = 0.5
-    else:
-        threshold = 0.25
-
-    # Build fishable list
-    fishable = [best_river]
-
-    for r in rivers_sorted[1:]:
-        diff = best_rating - ratings.get(r, 0)
-        if diff <= threshold:
-            fishable.append(r)
-        else:
-            break  # stop at first river that fails
-
-    return fishable
-
-
-def allocate_days(total_days, region_seq, ratings, vetoes):
-    """
-    Deacon allocation model:
-      - Pyramid: 3 days if >=3.5, 2 days if >=3.25, else 1
-      - OP: must have >=2 days or excluded
-      - Coast collapse: if all coastal <1.0, dump into Pyramid
-      - Otherwise: min 1 day each coastal region (OP min 2)
-      - Ensure second-best coastal region gets >=2 days
-      - Remaining days go to best coastal region
-    """
-    if total_days <= 0 or not region_seq:
-        return {}
-
-    regions = [r for r in region_seq if r != "Eagle"]
-
-    scores = {r: score_region(r, ratings, vetoes) for r in regions}
-
-    coastal_regs = [r for r in regions if r in ["NorCal", "Oregon", "OP"]]
-    coastal_scores = {r: scores.get(r, 0.0) for r in coastal_regs}
-
-    pyr_rating = scores.get("Pyramid", 0.0)
-
-    # Minimum allocations
-    alloc = {}
-    for reg in regions:
-        if reg == "Pyramid":
-            if pyr_rating >= 3.5:
-                alloc[reg] = 3
-            elif pyr_rating >= 3.25:
-                alloc[reg] = 2
-            else:
-                alloc[reg] = 1
-        elif reg == "OP":
-            alloc[reg] = 2
-        else:
-            alloc[reg] = 1
-
-    # Coast collapse
-    if coastal_regs and max(coastal_scores.values()) < 1.0:
-        used = sum(alloc.values())
-        remaining = total_days - used
-        if remaining > 0:
-            if "Pyramid" in alloc:
-                alloc["Pyramid"] += remaining
+                while remaining > 0:
+                    if second and alloc.get(second, 0) < 2:
+                        alloc[second] += 1
+                        remaining -= 1
+                        continue
+                    alloc[best] += 1
+                    remaining -= 1
             else:
                 best = max(scores.keys(), key=lambda r: scores[r])
                 alloc[best] += remaining
-        return alloc
 
-    # OP feasibility
-    if "OP" in regions:
-        used = sum(alloc.values())
-        remaining = total_days - used
-        if alloc["OP"] + max(remaining, 0) < 2:
-            total_days += alloc["OP"]
-            del alloc["OP"]
-            regions.remove("OP")
-            coastal_regs = [r for r in coastal_regs if r != "OP"]
-            coastal_scores = {r: scores.get(r, 0.0) for r in coastal_regs}
+            return alloc
 
-    # Recompute remaining
-    used = sum(alloc.values())
-    remaining = total_days - used
+        # ===== 5. BASIN CORRIDOR / EAGLE LOGIC =====
 
-    if remaining < 0:
-        # Trim lowest-value regions
-        for reg in sorted(alloc.keys(), key=lambda r: scores.get(r, 0.0)):
-            if remaining == 0:
-                break
-            min_allowed = (
-                3 if reg == "Pyramid" and pyr_rating >= 3.5 else
-                2 if (reg == "Pyramid" and pyr_rating >= 3.25) or reg == "OP" else
-                1
+        def uses_basin_corridor(region_seq):
+            """True if Pyramid or inland transitions exist."""
+            if "Pyramid" in region_seq:
+                return True
+            if "NorCal" in region_seq and "Oregon" in region_seq:
+                return True
+            if "Oregon" in region_seq and "OP" in region_seq:
+                return True
+            return False
+
+        def eagle_allowed(region_seq, vetoes):
+            """Eagle allowed unless OP-only or Pyramid vetoed without inland link."""
+            if region_seq == ["OP"]:
+                return False
+            if vetoes.get("Pyramid", False) and not (
+                "NorCal" in region_seq and "Oregon" in region_seq
+            ):
+                return False
+            return uses_basin_corridor(region_seq)
+
+        def eagle_position(region_seq):
+            """Insert Eagle after Pyramid or before first inland transition."""
+            if "Pyramid" in region_seq:
+                return region_seq.index("Pyramid") + 1
+
+            transitions = [("NorCal", "Oregon"), ("Oregon", "OP")]
+            for a, b in transitions:
+                if a in region_seq and b in region_seq and region_seq.index(a) < region_seq.index(b):
+                    return region_seq.index(a) + 1
+
+            return len(region_seq)
+
+        def eagle_homeward_required(current_loc):
+            """If >12 hours from home, Eagle can be used as overnight."""
+            miles, hrs = get_drive_distance(current_loc, "Home")
+            return hrs > 12.0
+
+        # ===== 6. REGION DETECTION & ORDERING =====
+
+        def region_has_fishable_rivers(region, ratings, vetoes, min_score=1.0):
+            """True if region has at least one river >= min_score."""
+            if vetoes.get(region, False):
+                return False
+            rivers = get_rivers_sorted(region, ratings, vetoes)
+            return any(ratings.get(r, 0.0) >= min_score for r in rivers)
+
+        def detect_trip_regions(ratings, vetoes):
+            """Determine which regions are included."""
+            use_pyr = not vetoes.get("Pyramid", False) and ratings.get("Pyramid", 0.0) >= 0.5
+            use_norcal = region_has_fishable_rivers("NorCal", ratings, vetoes)
+            use_oregon = region_has_fishable_rivers("Oregon", ratings, vetoes)
+            use_op = region_has_fishable_rivers("OP", ratings, vetoes)
+
+            regions = {
+                "Pyramid": use_pyr,
+                "NorCal": use_norcal,
+                "Oregon": use_oregon,
+                "OP": use_op,
+            }
+
+            op_only = use_op and not (use_pyr or use_norcal or use_oregon)
+            return regions, op_only
+
+        def build_region_sequence(vetoes, ratings):
+            """Build ordered region sequence."""
+            seq = []
+
+            if not vetoes.get("Pyramid", False) and ratings.get("Pyramid", 0.0) >= 0.5:
+                seq.append("Pyramid")
+
+            if region_has_fishable_rivers("NorCal", ratings, vetoes):
+                seq.append("NorCal")
+
+            if region_has_fishable_rivers("Oregon", ratings, vetoes):
+                seq.append("Oregon")
+
+            if region_has_fishable_rivers("OP", ratings, vetoes):
+                op_score = score_region("OP", ratings, vetoes)
+                other_scores = score_region("NorCal", ratings, vetoes) + score_region("Oregon", ratings, vetoes)
+                if op_score >= 6.0 or (op_score >= 4.0 and other_scores == 0):
+                    seq.append("OP")
+
+            return seq
+
+        def get_region_hub(region, ratings, vetoes):
+            """Return the hub town for a region."""
+            if region == "NorCal":
+                good = get_rivers_sorted("NorCal", ratings, vetoes)
+                if not good:
+                    return "Pepperwood"
+                if "Smith River (CA)" in good[:2]:
+                    return "Hiouchi"
+                if any(r in good for r in ["Eel (Main)", "SF Eel", "Van Duzen"]):
+                    return "Eureka"
+                return "Pepperwood"
+
+            if region == "Oregon":
+                good = get_rivers_sorted("Oregon", ratings, vetoes)
+                if not good:
+                    return "Brookings"
+                if "Chetco" in good[:2]:
+                    return "Brookings"
+                if any(r in good for r in ["Elk River", "Sixes River"]):
+                    return "Port Orford"
+                if "Rogue" in good:
+                    return "Gold Beach"
+                if any(r in good for r in ["N. Umpqua", "Umpqua (Main)"]):
+                    return "Coos Bay"
+                return "Brookings"
+
+            if region == "OP":
+                return "Forks"
+            if region == "Pyramid":
+                return "Pyramid"
+            if region == "Eagle":
+                return "Eagle"
+            return "Home"
+
+        # ===== 7. ITINERARY ENGINE =====
+
+        def get_drive_distance(loc1, loc2):
+            """Haversine-based road distance with 1.25 fudge factor."""
+            if loc1 == loc2:
+                return 0, 0.0
+            if loc1 not in NODE_COORDS or loc2 not in NODE_COORDS:
+                return 0, 0.0
+
+            lat1, lon1 = NODE_COORDS[loc1]
+            lat2, lon2 = NODE_COORDS[loc2]
+
+            R = 3958.8
+            dlat = math.radians(lat2 - lat1)
+            dlon = math.radians(lon2 - lon1)
+            a = (
+                math.sin(dlat / 2) ** 2
+                + math.cos(math.radians(lat1))
+                * math.cos(math.radians(lat2))
+                * math.sin(dlon / 2) ** 2
             )
-            while alloc[reg] > min_allowed and remaining < 0:
-                alloc[reg] -= 1
-                remaining += 1
-        return alloc
-
-    if remaining == 0:
-        return alloc
-
-    # Distribute remaining days
-    coastal_nonempty = {r: s for r, s in coastal_scores.items() if r in alloc}
-    if coastal_nonempty:
-        ranked = sorted(coastal_nonempty.keys(), key=lambda r: coastal_nonempty[r], reverse=True)
-        best = ranked[0]
-        second = ranked[1] if len(ranked) > 1 else None
-
-        while remaining > 0:
-            if second and alloc.get(second, 0) < 2:
-                alloc[second] += 1
-                remaining -= 1
-                continue
-            alloc[best] += 1
-            remaining -= 1
-    else:
-        best = max(scores.keys(), key=lambda r: scores[r])
-        alloc[best] += remaining
-
-    return alloc
-
-
-# ===== 5. BASIN CORRIDOR / EAGLE LOGIC =====
-
-def uses_basin_corridor(region_seq):
-    """True if Pyramid or inland transitions exist."""
-    if "Pyramid" in region_seq:
-        return True
-    if "NorCal" in region_seq and "Oregon" in region_seq:
-        return True
-    if "Oregon" in region_seq and "OP" in region_seq:
-        return True
-    return False
-
-
-def eagle_allowed(region_seq, vetoes):
-    """Eagle allowed unless OP-only or Pyramid vetoed without inland link."""
-    if region_seq == ["OP"]:
-        return False
-    if vetoes.get("Pyramid", False) and not ("NorCal" in region_seq and "Oregon" in region_seq):
-        return False
-    return uses_basin_corridor(region_seq)
-
-
-def eagle_position(region_seq):
-    """Insert Eagle after Pyramid or before first inland transition."""
-    if "Pyramid" in region_seq:
-        return region_seq.index("Pyramid") + 1
-
-    transitions = [("NorCal", "Oregon"), ("Oregon", "OP")]
-    for a, b in transitions:
-        if a in region_seq and b in region_seq and region_seq.index(a) < region_seq.index(b):
-            return region_seq.index(a) + 1
-
-    return len(region_seq)
-
-
-def eagle_homeward_required(current_loc):
-    """If >12 hours from home, Eagle can be used as overnight."""
-    miles, hrs = get_drive_distance(current_loc, "Home")
-    return hrs > 12.0
-
-
-# ===== 6. REGION DETECTION & ORDERING =====
-
-def region_has_fishable_rivers(region, ratings, vetoes, min_score=1.0):
-    """True if region has at least one river >= min_score."""
-    if vetoes.get(region, False):
-        return False
-    rivers = get_rivers_sorted(region, ratings, vetoes)
-    return any(ratings.get(r, 0.0) >= min_score for r in rivers)
-
-
-def detect_trip_regions(ratings, vetoes):
-    """Determine which regions are included."""
-    use_pyr = not vetoes.get("Pyramid", False) and ratings.get("Pyramid", 0.0) >= 0.5
-    use_norcal = region_has_fishable_rivers("NorCal", ratings, vetoes)
-    use_oregon = region_has_fishable_rivers("Oregon", ratings, vetoes)
-    use_op = region_has_fishable_rivers("OP", ratings, vetoes)
-
-    regions = {
-        "Pyramid": use_pyr,
-        "NorCal": use_norcal,
-        "Oregon": use_oregon,
-        "OP": use_op,
-    }
-
-    op_only = use_op and not (use_pyr or use_norcal or use_oregon)
-    return regions, op_only
-
-
-def build_region_sequence(vetoes, ratings):
-    """Build ordered region sequence."""
-    seq = []
-
-    if not vetoes.get("Pyramid", False) and ratings.get("Pyramid", 0.0) >= 0.5:
-        seq.append("Pyramid")
-
-    if region_has_fishable_rivers("NorCal", ratings, vetoes):
-        seq.append("NorCal")
-
-    if region_has_fishable_rivers("Oregon", ratings, vetoes):
-        seq.append("Oregon")
-
-    if region_has_fishable_rivers("OP", ratings, vetoes):
-        op_score = score_region("OP", ratings, vetoes)
-        other_scores = score_region("NorCal", ratings, vetoes) + score_region("Oregon", ratings, vetoes)
-        if op_score >= 6.0 or (op_score >= 4.0 and other_scores == 0):
-            seq.append("OP")
-
-    return seq
-
-
-def order_filler_regions(possible_regions, ratings, current_region=None):
-    """Order filler regions by rating with 0.5 guardrail."""
-    regions_sorted = sorted(possible_regions, key=lambda r: ratings.get(r, 0.0), reverse=True)
-
-    if current_region is None:
-        return regions_sorted
-
-    ordered = []
-    current = current_region
-
-    for reg in regions_sorted:
-        if reg == current:
-            continue
-        gain = ratings.get(reg, 0.0) - ratings.get(current, 0.0)
-        if gain >= 0.5:
-            ordered.append(reg)
-            current = reg
-
-    for reg in regions_sorted:
-        if reg not in ordered and reg != current_region:
-            ordered.append(reg)
-
-    return ordered
-
-
-def get_region_hub(region, ratings, vetoes):
-    """Return the hub town for a region."""
-    if region == "NorCal":
-        good = get_rivers_sorted("NorCal", ratings, vetoes)
-        if not good:
-            return "Pepperwood"
-        if "Smith River (CA)" in good[:2]:
-            return "Hiouchi"
-        if any(r in good for r in ["Eel (Main)", "SF Eel", "Van Duzen"]):
-            return "Eureka"
-        return "Pepperwood"
-
-    if region == "Oregon":
-        good = get_rivers_sorted("Oregon", ratings, vetoes)
-        if not good:
-            return "Brookings"
-        if "Chetco" in good[:2]:
-            return "Brookings"
-        if any(r in good for r in ["Elk River", "Sixes River"]):
-            return "Port Orford"
-        if "Rogue" in good:
-            return "Gold Beach"
-        if any(r in good for r in ["N. Umpqua", "Umpqua (Main)"]):
-            return "Coos Bay"
-        return "Brookings"
-
-    if region == "OP":
-        return "Forks"
-
-    if region == "Pyramid":
-        return "Pyramid"
-
-    if region == "Eagle":
-        return "Eagle"
-
-    return "Home"
-
-# ===== 7. ITINERARY ENGINE (CORRECTED) =====
-# ===== PART 5 — CHUNK 1 OF 4 =====
-# Core utilities, directional order, region scoring, and river selection (R‑C)
-
-def get_drive_distance(loc1, loc2):
-    """Haversine-based road distance with 1.25 fudge factor."""
-    if loc1 == loc2:
-        return 0, 0.0
-    if loc1 not in NODE_COORDS or loc2 not in NODE_COORDS:
-        return 0, 0.0
-
-    lat1, lon1 = NODE_COORDS[loc1]
-    lat2, lon2 = NODE_COORDS[loc2]
-
-    R = 3958.8
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dlat/2)**2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlon/2)**2
-    )
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    miles_straight = R * c
-    miles_road = miles_straight * 1.25
-    hours = miles_road / 55.0
-
-    return int(round(miles_road)), round(hours, 1)
-
-
-# ===== Directional order (south → north) =====
-
-DIRECTIONAL_ORDER = {
-    "NorCal": [
-        "Eel (Main)",
-        "SF Eel",
-        "Van Duzen",
-        "Smith River (CA)"
-    ],
-    "Oregon": [
-        "Chetco",
-        "Elk River",
-        "Sixes River",
-        "Rogue",
-        "Umpqua (Main)",
-        "N. Umpqua"
-    ],
-    "OP": [
-        "Queets",
-        "Hoh",
-        "Bogachiel",
-        "Calawah"
-    ]
-}
-
-
-def get_directional_order(region):
-    """Return the directional order list for a region."""
-    return DIRECTIONAL_ORDER.get(region, [])
-
-
-# ===== Region score (R2: sum of top 2 rivers) =====
-
-def get_region_score(region, ratings, vetoes):
-    """Region score = sum of top 2 river ratings."""
-    rivers = RIVER_SPECS.get(region, [])
-    vals = []
-    for r in rivers:
-        if vetoes.get(r["Name"], False):
-            continue
-        vals.append(ratings.get(r["Name"], 0.0))
-    vals.sort(reverse=True)
-    if not vals:
-        return 0.0
-    if len(vals) == 1:
-        return vals[0]
-    return vals[0] + vals[1]
-
-
-# ===== River selection (R‑C: best river → directional order) =====
-
-def allocate_rivers_in_region(region, days, ratings, vetoes):
-    """
-    R‑C logic:
-      1. Pick highest-rated river in region
-      2. Then follow directional order (south → north)
-      3. Only return 'days' rivers
-    """
-    if days <= 0:
-        return []
-
-    rivers = RIVER_SPECS.get(region, [])
-    if not rivers:
-        return []
-
-    # Build rating map
-    rating_map = {}
-    for r in rivers:
-        if vetoes.get(r["Name"], False):
-            continue
-        rating_map[r["Name"]] = ratings.get(r["Name"], 0.0)
-
-    if not rating_map:
-        return []
-
-    # Step 1: highest-rated river
-    best_river = max(rating_map, key=lambda x: rating_map[x])
-
-    # Step 2: directional order
-    order = get_directional_order(region)
-    if not order:
-        # fallback: just sort by rating
-        ordered = sorted(rating_map.keys(), key=lambda x: rating_map[x], reverse=True)
-    else:
-        # rotate directional list so best river is first
-        if best_river in order:
-            idx = order.index(best_river)
-            ordered = order[idx:] + order[:idx]
-        else:
-            # if best river not in directional list, fallback to rating order
-            ordered = sorted(rating_map.keys(), key=lambda x: rating_map[x], reverse=True)
-
-    # Filter to rivers actually present and not vetoed
-    final_list = [r for r in ordered if r in rating_map]
-
-    # Step 3: return only as many as allocated days
-    return final_list[:days]
-# ===== PART 5 — CHUNK 2 OF 4 =====
-# Filler region selection (C3 + R2) and filler rivers
-
-def choose_filler_region(current_region, visited_regions, ratings, vetoes):
-    """
-    C3 + R2:
-      - Compute region score for each visited region (sum of top 2 rivers)
-      - Default: stay in current_region
-      - Move only if another region's score beats current by ≥ 0.5
-    """
-    if not visited_regions:
-        return current_region
-
-    scores = {}
-    for reg in visited_regions:
-        scores[reg] = get_region_score(reg, ratings, vetoes)
-
-    current_score = scores.get(current_region, 0.0)
-    best_region = current_region
-    best_score = current_score
-
-    for reg, sc in scores.items():
-        if sc >= best_score + 0.5:
-            best_region = reg
-            best_score = sc
-
-    return best_region
-
-
-def choose_filler_river(region, ratings, vetoes):
-    """
-    Choose the best available river in a region for a filler day.
-    Uses same R‑C rating logic but only returns one river.
-    """
-    rivers = RIVER_SPECS.get(region, [])
-    rating_map = {}
-    for r in rivers:
-        name = r["Name"]
-        if vetoes.get(name, False):
-            continue
-        rating_map[name] = ratings.get(name, 0.0)
-
-    if not rating_map:
-        return None
-
-    # Best-rated river
-    best_river = max(rating_map, key=lambda x: rating_map[x])
-    return best_river
-# ===== PART 5 — CHUNK 3 OF 4 =====
-# Pyramid block, Eagle block, region transitions, scaffolding
-
-def drive_and_log(rows, current_date, current_loc, next_loc, mpg, NODES, label):
-    """Drive from current_loc to next_loc and log it. Returns (new_loc, new_date, days_used_increment)."""
-    miles, hrs = get_drive_distance(current_loc, next_loc)
-    gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
-    gas_cost = (miles / mpg) * gas_price
-
-    rows.append([
-        current_date.strftime("%b %d (%a)"),
-        next_loc,
-        f"DRIVE: {current_loc} → {next_loc} ({label})",
-        miles,
-        hrs,
-        f"${gas_cost:.0f}"
-    ])
-
-    # Transition rule (Option B):
-    #   - If drive > 3 hours → consumes a full day
-    #   - If drive ≤ 3 hours → same-day transition allowed
-    if hrs > 3.0:
-        return next_loc, current_date + timedelta(days=1), 1
-    else:
-        return next_loc, current_date, 0
-
-
-def run_pyramid_block(rows, start_date, mpg, NODES, ratings, vetoes):
-    """
-    Pyramid block:
-      - Day 1: Drive Home → Pyramid
-      - Next N days: Fish Pyramid
-    """
-    pyr_rating = ratings.get("Pyramid", 0.0)
-
-    if pyr_rating >= 3.5:
-        pyr_days = 3
-    elif pyr_rating >= 3.25:
-        pyr_days = 2
-    else:
-        pyr_days = 1
-
-    current_loc = "Pyramid"
-    current_date = start_date
-    days_used = 0
-
-    # Day 1: drive Home → Pyramid
-    miles, hrs = get_drive_distance("Home", "Pyramid")
-    gas_price = NODES.get("Home", {}).get("gas", 4.00)
-    gas_cost = (miles / mpg) * gas_price
-
-    rows.append([
-        current_date.strftime("%b %d (%a)"),
-        "Pyramid",
-        "DRIVE: Home → Pyramid (Pyramid)",
-        miles,
-        hrs,
-        f"${gas_cost:.0f}"
-    ])
-
-    days_used += 1
-    current_date += timedelta(days=1)  # <-- KEY: move to next day before fishing
-
-    # Fish Pyramid for pyr_days
-    for _ in range(pyr_days):
-        rows.append([
-            current_date.strftime("%b %d (%a)"),
-            "Pyramid",
-            "FISH: Pyramid (Pyramid)",
-            0,
-            0,
-            "-"
-        ])
-        days_used += 1
-        current_date += timedelta(days=1)
-
-    # No extra "advance to next morning" here
-
-    return current_loc, current_date, days_used
-
-def run_eagle_block(rows, current_loc, current_date, days_used, mpg, NODES, next_region, ratings, vetoes):
-    """
-    Correct Eagle behavior:
-    - Drive Pyramid → Eagle (consumes 1 day)
-    - Fish Eagle same day (does NOT consume another day)
-    - Return updated date + days_used
-    """
-
-    # DRIVE TO EAGLE (consumes 1 day)
-    miles, hrs = get_drive_distance(current_loc, "Eagle")
-    gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
-    gas_cost = (miles / mpg) * gas_price
-
-    rows.append([
-        current_date.strftime("%b %d (%a)"),
-        "Eagle",
-        "DRIVE: " + current_loc + " → Eagle (Eagle)",
-        miles,
-        hrs,
-        f"${gas_cost:.0f}"
-    ])
-
-    current_loc = "Eagle"
-    current_date += timedelta(days=1)
-    days_used += 1
-
-    # FISH EAGLE SAME DAY (NO DATE ADVANCE)
-    rows.append([
-        (current_date - timedelta(days=1)).strftime("%b %d (%a)"),
-        "Eagle",
-        "FISH: Eagle Lake (Half-Day)",
-        0,
-        0,
-        "-"
-    ])
-
-    return current_loc, current_date, days_used
-
-def drive_to_region(rows, current_loc, current_date, days_used, target_region, ratings, vetoes, mpg, NODES):
-    """Drive to a region hub using Option B transition rules."""
-    hub = get_region_hub(target_region, ratings, vetoes)
-    new_loc, new_date, inc = drive_and_log(
-        rows,
-        current_date,
-        current_loc,
-        hub,
-        mpg,
-        NODES,
-        target_region
-    )
-    return new_loc, new_date, days_used + inc
-
-# ===== PART 5 — CHUNK 4 (REBUILT WITH DYNAMIC THRESHOLDS & OP RULE) =====
-
-def region_of_location(loc):
-    """Return the region associated with a hub/location."""
-    if loc in {"Hiouchi", "Pepperwood", "Maple Grove", "Eureka"}:
-        return "NorCal"
-    if loc in {"Brookings", "Port Orford", "Gold Beach", "Reedsport", "Steamboat", "Coos Bay"}:
-        return "Oregon"
-    if loc in {"Forks", "Bogachiel", "Hoh", "Queets"}:
-        return "OP"
-    if loc == "Pyramid":
-        return "Pyramid"
-    if loc == "Eagle":
-        return "Eagle"
-    return None
-
-
-def finalize_return(rows, current_loc, current_date, total_trip_days, mpg, NODES, start_date):
-    """
-    Clean, chronological return logic.
-    Uses current_date as the next available day.
-    Never rewrites earlier days.
-    """
-
-    days_used = (current_date - start_date).days
-    remaining_days = total_trip_days - days_used
-
-    if remaining_days <= 0:
-        return rows
-
-    miles, hrs = get_drive_distance(current_loc, "Home")
-    gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
-    gas_cost = (miles / mpg) * gas_price
-
-    MAX_HOURS_PER_DAY = 10.0
-
-    # If we can make it home in one day OR only one day remains
-    if hrs <= MAX_HOURS_PER_DAY or remaining_days == 1:
-        rows.append([
-            current_date.strftime("%b %d (%a)"),
-            "Home",
-            f"RETURN: {current_loc} → Home",
-            miles,
-            hrs,
-            f"${gas_cost:.0f}"
-        ])
-        return rows
-
-    # Otherwise: two-day return
-    half_miles = miles * 0.5
-    half_hrs = hrs * 0.5
-    half_cost = gas_cost * 0.5
-
-    # Leg 1
-    rows.append([
-        current_date.strftime("%b %d (%a)"),
-        "On Route",
-        f"RETURN (Leg 1): {current_loc} → Midpoint",
-        half_miles,
-        half_hrs,
-        f"${half_cost:.0f}"
-    ])
-
-    # Leg 2
-    rows.append([
-        (current_date + timedelta(days=1)).strftime("%b %d (%a)"),
-        "Home",
-        "RETURN (Leg 2): Midpoint → Home",
-        half_miles,
-        half_hrs,
-        f"${half_cost:.0f}"
-    ])
-
-    return rows
-
-def get_rivers_for_region(region):
-    """
-    Build a list of rivers belonging to a region based on RIVER_TO_NODE.
-    This replaces REGION_TO_RIVERS which does not exist in your codebase.
-    """
-    rivers = []
-    for river, hub in RIVER_TO_NODE.items():
-        if region_of_location(hub) == region:
-            rivers.append(river)
-    return rivers
-
-def build_itinerary(start_date, total_trip_days, ratings, vetoes, mpg, NODES):
-    """
-    Full itinerary engine implementing:
-      - Pyramid block (always first)
-      - Eagle half-day logic
-      - Dynamic river thresholds with second-best logic
-      - Entry hub = hub of best river (especially for NorCal)
-      - OP only visited if there are 2+ fishable days
-      - No bouncing between hubs inside regions
-      - Filler logic using PHYSICAL REGION
-      - Correct date handling (no drift, no skipped days)
-    """
-
-    rows = []
-    current_date = start_date
-    current_loc = "Home"
-
-    # ===== REGION SEQUENCE =====
-    base_seq = build_region_sequence(vetoes, ratings)
-
-    # Pyramid always first if included
-    has_pyramid = "Pyramid" in base_seq and not vetoes.get("Pyramid", False)
-    if has_pyramid:
-        base_seq = ["Pyramid"] + [r for r in base_seq if r != "Pyramid"]
-
-    # Eagle allowed?
-    allow_eagle = eagle_allowed(base_seq, vetoes)
-
-    # ===== ALLOCATE DAYS =====
-    alloc = allocate_days(total_trip_days, base_seq, ratings, vetoes)
-
-    # Override Pyramid allocation
-    if has_pyramid:
-        pyr_rating = ratings.get("Pyramid", 0.0)
-        if pyr_rating >= 3.5:
-            alloc["Pyramid"] = 3
-        elif pyr_rating >= 3.25:
-            alloc["Pyramid"] = 2
-        else:
-            alloc["Pyramid"] = 1
-
-    # Build post-Pyramid region list
-    post_pyr_seq = [r for r in base_seq if r != "Pyramid"]
-
-    visited_regions = set()
-
-    def days_used_from_date(dt):
-        return (dt - start_date).days
-
-    def get_fishable_rivers(region):
-        """
-        Dynamic threshold + second-best logic:
-
-          - Best ≥ 4.0 → threshold = 1.0
-          - Best 3.5–4.0 → threshold = 0.75
-          - Best 2.5–3.0 → threshold = 0.5
-          - Best < 2.5 → threshold = 0.25
-
-        Rivers sorted by rating (desc).
-        Include best, then keep adding until first river that fails threshold.
-        """
-        rivers_all = get_rivers_for_region(region)
-        rivers_all = [r for r in rivers_all if not vetoes.get(r, False)]
-        if not rivers_all:
-            return []
-
-        rivers_sorted = sorted(rivers_all, key=lambda r: ratings.get(r, 0), reverse=True)
-        best_river = rivers_sorted[0]
-        best_rating = ratings.get(best_river, 0)
-
-        if best_rating >= 4.0:
-            threshold = 1.0
-        elif best_rating >= 3.5:
-            threshold = 0.75
-        elif best_rating >= 2.5:
-            threshold = 0.5
-        else:
-            threshold = 0.25
-
-        fishable = [best_river]
-        for r in rivers_sorted[1:]:
-            diff = best_rating - ratings.get(r, 0)
-            if diff <= threshold:
-                fishable.append(r)
-            else:
-                break  # stop at first failure
-
-        return fishable
-
-    # ===== 1. PYRAMID BLOCK =====
-    if has_pyramid:
-        current_loc, current_date, _ = run_pyramid_block(
-            rows, start_date, mpg, NODES, ratings, vetoes
-        )
-        visited_regions.add("Pyramid")
-
-    # ===== 2. EAGLE BLOCK =====
-    if has_pyramid and allow_eagle and days_used_from_date(current_date) < total_trip_days:
-        next_region = post_pyr_seq[0] if post_pyr_seq else None
-        current_loc, current_date, _ = run_eagle_block(
-            rows,
-            current_loc,
-            current_date,
-            days_used_from_date(current_date),
-            mpg,
-            NODES,
-            next_region,
-            ratings,
-            vetoes
-        )
-        visited_regions.add("Eagle")
-
-    # ===== SPECIAL CASE: SAME-DAY EAGLE → NORCAL ENTRY =====
-    if current_loc == "Eagle" and post_pyr_seq and post_pyr_seq[0] == "NorCal":
-        norcal_rivers = get_fishable_rivers("NorCal")
-        if norcal_rivers:
-            best_river = norcal_rivers[0]
-            eel_system = {"Eel (Main)", "SF Eel", "Van Duzen"}
-
-            if best_river in eel_system:
-                entry_hub = "Pepperwood"
-            else:
-                entry_hub = "Hiouchi"
-
-            miles, hrs = get_drive_distance("Eagle", entry_hub)
-            gas_price = NODES.get("Eagle", {}).get("gas", 4.00)
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            miles_straight = R * c
+            miles_road = miles_straight * 1.25
+            hours = miles_road / 55.0
+
+            return int(round(miles_road)), round(hours, 1)
+
+        def drive_and_log(rows, current_date, current_loc, next_loc, mpg, NODES, label):
+            """Drive from current_loc to next_loc and log it."""
+            miles, hrs = get_drive_distance(current_loc, next_loc)
+            gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
             gas_cost = (miles / mpg) * gas_price
 
-            # Log drive on same day as Eagle half-day (current_date - 1)
             rows.append([
-                (current_date - timedelta(days=1)).strftime("%b %d (%a)"),
-                entry_hub,
-                f"DRIVE: Eagle → {entry_hub} (NorCal Entry)",
+                current_date.strftime("%b %d (%a)"),
+                next_loc,
+                f"DRIVE: {current_loc} → {next_loc} ({label})",
                 miles,
                 hrs,
                 f"${gas_cost:.0f}"
             ])
 
-            current_loc = entry_hub
-        # current_date stays as the next morning
-
-    # ===== 3. MAIN REGION LOOP =====
-    for reg in post_pyr_seq:
-        days_used = days_used_from_date(current_date)
-        if days_used >= total_trip_days:
-            break
-
-        # Get fishable rivers for this region
-        rivers = get_fishable_rivers(reg)
-
-        # Special OP rule: only go if 2+ fishable days
-        if reg == "OP" and len(rivers) < 2:
-            continue
-
-        if not rivers:
-            continue
-
-        # Determine entry hub
-        if reg == "NorCal":
-            best_river = rivers[0]
-            eel_system = {"Eel (Main)", "SF Eel", "Van Duzen"}
-            if best_river in eel_system:
-                region_hub = "Pepperwood"
+            if hrs > 3.0:
+                return next_loc, current_date + timedelta(days=1), 1
             else:
-                region_hub = "Hiouchi"
-        else:
-            # Default: hub of best river if available, otherwise region hub
-            best_river = rivers[0]
-            region_hub = RIVER_TO_NODE.get(best_river, get_region_hub(reg, ratings, vetoes))
+                return next_loc, current_date, 0
 
-        # Drive to region entry hub if needed
-        if current_loc != region_hub:
-            current_loc, current_date, _ = drive_and_log(
-                rows,
-                current_date,
-                current_loc,
-                region_hub,
-                mpg,
-                NODES,
-                label=f"{reg} Entry"
-            )
-            days_used = days_used_from_date(current_date)
-            if days_used >= total_trip_days:
-                break
+        def run_pyramid_block(rows, start_date, mpg, NODES, ratings, vetoes):
+            """
+            Pyramid block:
+              - Day 1: Drive Home → Pyramid
+              - Next N days: Fish Pyramid
+            """
+            pyr_rating = ratings.get("Pyramid", 0.0)
 
-        visited_regions.add(reg)
+            if pyr_rating >= 3.5:
+                pyr_days = 3
+            elif pyr_rating >= 3.25:
+                pyr_days = 2
+            else:
+                pyr_days = 1
 
-        # Fish rivers in this region (no bouncing; movement only when river is within threshold)
-        for rv in rivers:
-            days_used = days_used_from_date(current_date)
-            if days_used >= total_trip_days:
-                break
+            current_loc = "Pyramid"
+            current_date = start_date
+            days_used = 0
 
-            river_hub = RIVER_TO_NODE.get(rv, region_hub)
-
-            if current_loc != river_hub:
-                current_loc, current_date, _ = drive_and_log(
-                    rows,
-                    current_date,
-                    current_loc,
-                    river_hub,
-                    mpg,
-                    NODES,
-                    label=f"{reg} Rivers"
-                )
-                days_used = days_used_from_date(current_date)
-                if days_used >= total_trip_days:
-                    break
+            miles, hrs = get_drive_distance("Home", "Pyramid")
+            gas_price = NODES.get("Home", {}).get("gas", 4.00)
+            gas_cost = (miles / mpg) * gas_price
 
             rows.append([
                 current_date.strftime("%b %d (%a)"),
-                river_hub,
-                f"FISH: {rv} ({reg})",
+                "Pyramid",
+                "DRIVE: Home → Pyramid (Pyramid)",
+                miles,
+                hrs,
+                f"${gas_cost:.0f}"
+            ])
+
+            days_used += 1
+            current_date += timedelta(days=1)
+
+            for _ in range(pyr_days):
+                rows.append([
+                    current_date.strftime("%b %d (%a)"),
+                    "Pyramid",
+                    "FISH: Pyramid (Pyramid)",
+                    0,
+                    0,
+                    "-"
+                ])
+                days_used += 1
+                current_date += timedelta(days=1)
+
+            return current_loc, current_date, days_used
+
+        def run_eagle_block(rows, current_loc, current_date, days_used, mpg, NODES, next_region, ratings, vetoes):
+            """
+            Correct Eagle behavior:
+            - Drive Pyramid → Eagle (consumes 1 day)
+            - Fish Eagle same day (does NOT consume another day)
+            """
+            miles, hrs = get_drive_distance(current_loc, "Eagle")
+            gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
+            gas_cost = (miles / mpg) * gas_price
+
+            rows.append([
+                current_date.strftime("%b %d (%a)"),
+                "Eagle",
+                f"DRIVE: {current_loc} → Eagle (Eagle)",
+                miles,
+                hrs,
+                f"${gas_cost:.0f}"
+            ])
+
+            current_loc = "Eagle"
+            current_date += timedelta(days=1)
+            days_used += 1
+
+            rows.append([
+                (current_date - timedelta(days=1)).strftime("%b %d (%a)"),
+                "Eagle",
+                "FISH: Eagle Lake (Half-Day)",
                 0,
                 0,
                 "-"
             ])
 
-            current_date += timedelta(days=1)
+            return current_loc, current_date, days_used
 
-    # ===== 4. FILLER DAYS =====
-    # Keep at least 2 days available for return if it's long
-    while days_used_from_date(current_date) < total_trip_days - 2:
-        days_used = days_used_from_date(current_date)
-        if days_used >= total_trip_days - 2:
-            break
+        def drive_to_region(rows, current_loc, current_date, days_used, target_region, ratings, vetoes, mpg, NODES):
+            """Drive to a region hub using Option B transition rules."""
+            hub = get_region_hub(target_region, ratings, vetoes)
+            new_loc, new_date, inc = drive_and_log(
+                rows,
+                current_date,
+                current_loc,
+                hub,
+                mpg,
+                NODES,
+                label=target_region
+            )
+            return new_loc, new_date, days_used + inc
 
-        physical_region = region_of_location(current_loc)
+        def region_of_location(loc):
+            """Return the region associated with a hub/location."""
+            if loc in {"Hiouchi", "Pepperwood", "Maple Grove", "Eureka"}:
+                return "NorCal"
+            if loc in {"Brookings", "Port Orford", "Gold Beach", "Reedsport", "Steamboat", "Coos Bay"}:
+                return "Oregon"
+            if loc in {"Forks", "Bogachiel", "Hoh", "Queets"}:
+                return "OP"
+            if loc == "Pyramid":
+                return "Pyramid"
+            if loc == "Eagle":
+                return "Eagle"
+            return None
 
-        filler_region = choose_filler_region(
-            current_region=physical_region,
-            visited_regions=visited_regions,
-            ratings=ratings,
-            vetoes=vetoes
-        )
+        def finalize_return(rows, current_loc, current_date, total_trip_days, mpg, NODES, start_date):
+            """
+            Clean, chronological return logic.
+            Uses current_date as the next available day.
+            Never rewrites earlier days.
+            """
+            days_used = (current_date - start_date).days
+            remaining_days = total_trip_days - days_used
 
-        hub = get_region_hub(filler_region, ratings, vetoes)
+            if remaining_days <= 0:
+                return rows
 
-        if current_loc != hub:
-            current_loc, current_date, days_used = drive_to_region(
+            miles, hrs = get_drive_distance(current_loc, "Home")
+            gas_price = NODES.get(current_loc, {}).get("gas", 4.00)
+            gas_cost = (miles / mpg) * gas_price
+
+            MAX_HOURS_PER_DAY = 10.0
+
+            if hrs <= MAX_HOURS_PER_DAY or remaining_days == 1:
+                rows.append([
+                    current_date.strftime("%b %d (%a)"),
+                    "Home",
+                    f"RETURN: {current_loc} → Home",
+                    miles,
+                    hrs,
+                    f"${gas_cost:.0f}"
+                ])
+                return rows
+
+            half_miles = miles * 0.5
+            half_hrs = hrs * 0.5
+            half_cost = gas_cost * 0.5
+
+            rows.append([
+                current_date.strftime("%b %d (%a)"),
+                "On Route",
+                f"RETURN (Leg 1): {current_loc} → Midpoint",
+                half_miles,
+                half_hrs,
+                f"${half_cost:.0f}"
+            ])
+
+            rows.append([
+                (current_date + timedelta(days=1)).strftime("%b %d (%a)"),
+                "Home",
+                "RETURN (Leg 2): Midpoint → Home",
+                half_miles,
+                half_hrs,
+                f"${half_cost:.0f}"
+            ])
+
+            return rows
+
+        def get_rivers_for_region(region):
+            """
+            Build a list of rivers belonging to a region based on RIVER_TO_NODE.
+            """
+            rivers = []
+            for river, hub in RIVER_TO_NODE.items():
+                if region_of_location(hub) == region:
+                    rivers.append(river)
+            return rivers
+
+        def choose_filler_region(current_region, visited_regions, ratings, vetoes):
+            """
+            Selects the next filler region based on:
+              - Not vetoed
+              - Has fishable rivers
+              - Not already visited (unless all visited)
+              - 0.5 rating gain guardrail
+            """
+            possible = []
+
+            for reg in ["NorCal", "Oregon", "OP"]:
+                if vetoes.get(reg, False):
+                    continue
+                if not region_has_fishable_rivers(reg, ratings, vetoes):
+                    continue
+                possible.append(reg)
+
+            if not possible:
+                return current_region or "NorCal"
+
+            unvisited = [r for r in possible if r not in visited_regions]
+            if unvisited:
+                possible = unvisited
+
+            possible_sorted = sorted(
+                possible,
+                key=lambda r: ratings.get(r, 0.0),
+                reverse=True
+            )
+
+            if current_region is None:
+                return possible_sorted[0]
+
+            best = possible_sorted[0]
+            if ratings.get(best, 0.0) >= ratings.get(current_region, 0.0) + 0.5:
+                return best
+
+            return current_region
+
+        def build_itinerary(start_date, total_trip_days, ratings, vetoes, mpg, NODES):
+            """
+            Full itinerary engine.
+            """
+            rows = []
+            current_date = start_date
+            current_loc = "Home"
+
+            base_seq = build_region_sequence(vetoes, ratings)
+
+            has_pyramid = "Pyramid" in base_seq and not vetoes.get("Pyramid", False)
+            if has_pyramid:
+                base_seq = ["Pyramid"] + [r for r in base_seq if r != "Pyramid"]
+
+            allow_eagle = eagle_allowed(base_seq, vetoes)
+
+            alloc = allocate_days(total_trip_days, base_seq, ratings, vetoes)
+
+            if has_pyramid:
+                pyr_rating = ratings.get("Pyramid", 0.0)
+                if pyr_rating >= 3.5:
+                    alloc["Pyramid"] = 3
+                elif pyr_rating >= 3.25:
+                    alloc["Pyramid"] = 2
+                else:
+                    alloc["Pyramid"] = 1
+
+            post_pyr_seq = [r for r in base_seq if r != "Pyramid"]
+            visited_regions = set()
+
+            def days_used_from_date(dt):
+                return (dt - start_date).days
+
+            def get_fishable_rivers(region):
+                """
+                Dynamic threshold + second-best logic.
+                """
+                rivers_all = get_rivers_for_region(region)
+                rivers_all = [r for r in rivers_all if not vetoes.get(r, False)]
+                if not rivers_all:
+                    return []
+
+                rivers_sorted = sorted(
+                    rivers_all,
+                    key=lambda r: ratings.get(r, 0),
+                    reverse=True
+                )
+                best_river = rivers_sorted[0]
+                best_rating = ratings.get(best_river, 0)
+
+                if best_rating >= 4.0:
+                    threshold = 1.0
+                elif best_rating >= 3.5:
+                    threshold = 0.75
+                elif best_rating >= 2.5:
+                    threshold = 0.5
+                else:
+                    threshold = 0.25
+
+                fishable = [best_river]
+                for r in rivers_sorted[1:]:
+                    diff = best_rating - ratings.get(r, 0)
+                    if diff <= threshold:
+                        fishable.append(r)
+                    else:
+                        break
+                return fishable
+
+            if has_pyramid:
+                current_loc, current_date, _ = run_pyramid_block(
+                    rows, start_date, mpg, NODES, ratings, vetoes
+                )
+                visited_regions.add("Pyramid")
+
+            if has_pyramid and allow_eagle and days_used_from_date(current_date) < total_trip_days:
+                next_region = post_pyr_seq[0] if post_pyr_seq else None
+                current_loc, current_date, _ = run_eagle_block(
+                    rows,
+                    current_loc,
+                    current_date,
+                    days_used_from_date(current_date),
+                    mpg,
+                    NODES,
+                    next_region,
+                    ratings,
+                    vetoes
+                )
+                visited_regions.add("Eagle")
+
+            if current_loc == "Eagle" and post_pyr_seq and post_pyr_seq[0] == "NorCal":
+                norcal_rivers = get_fishable_rivers("NorCal")
+                if norcal_rivers:
+                    best_river = norcal_rivers[0]
+                    eel_system = {"Eel (Main)", "SF Eel", "Van Duzen"}
+
+                    if best_river in eel_system:
+                        entry_hub = "Pepperwood"
+                    else:
+                        entry_hub = "Hiouchi"
+
+                    miles, hrs = get_drive_distance("Eagle", entry_hub)
+                    gas_price = NODES.get("Eagle", {}).get("gas", 4.00)
+                    gas_cost = (miles / mpg) * gas_price
+
+                    rows.append([
+                        (current_date - timedelta(days=1)).strftime("%b %d (%a)"),
+                        entry_hub,
+                        f"DRIVE: Eagle → {entry_hub} (NorCal Entry)",
+                        miles,
+                        hrs,
+                        f"${gas_cost:.0f}"
+                    ])
+
+                    current_loc = entry_hub
+
+            for reg in post_pyr_seq:
+                days_used = days_used_from_date(current_date)
+                if days_used >= total_trip_days:
+                    break
+
+                rivers = get_fishable_rivers(reg)
+
+                if reg == "OP" and len(rivers) < 2:
+                    continue
+                if not rivers:
+                    continue
+
+                if reg == "NorCal":
+                    best_river = rivers[0]
+                    eel_system = {"Eel (Main)", "SF Eel", "Van Duzen"}
+                    if best_river in eel_system:
+                        region_hub = "Pepperwood"
+                    else:
+                        region_hub = "Hiouchi"
+                else:
+                    best_river = rivers[0]
+                    region_hub = RIVER_TO_NODE.get(best_river, get_region_hub(reg, ratings, vetoes))
+
+                if current_loc != region_hub:
+                    current_loc, current_date, _ = drive_and_log(
+                        rows,
+                        current_date,
+                        current_loc,
+                        region_hub,
+                        mpg,
+                        NODES,
+                        label=f"{reg} Entry"
+                    )
+                    days_used = days_used_from_date(current_date)
+                    if days_used >= total_trip_days:
+                        break
+
+                visited_regions.add(reg)
+
+                for rv in rivers:
+                    days_used = days_used_from_date(current_date)
+                    if days_used >= total_trip_days:
+                        break
+
+                    river_hub = RIVER_TO_NODE.get(rv, region_hub)
+
+                    if current_loc != river_hub:
+                        current_loc, current_date, _ = drive_and_log(
+                            rows,
+                            current_date,
+                            current_loc,
+                            river_hub,
+                            mpg,
+                            NODES,
+                            label=f"{reg} Rivers"
+                        )
+                        days_used = days_used_from_date(current_date)
+                        if days_used >= total_trip_days:
+                            break
+
+                    rows.append([
+                        current_date.strftime("%b %d (%a)"),
+                        river_hub,
+                        f"FISH: {rv} ({reg})",
+                        0,
+                        0,
+                        "-"
+                    ])
+
+                    current_date += timedelta(days=1)
+
+            while days_used_from_date(current_date) < total_trip_days - 2:
+                days_used = days_used_from_date(current_date)
+                if days_used >= total_trip_days - 2:
+                    break
+
+                physical_region = region_of_location(current_loc)
+
+                filler_region = choose_filler_region(
+                    current_region=physical_region,
+                    visited_regions=visited_regions,
+                    ratings=ratings,
+                    vetoes=vetoes
+                )
+
+                hub = get_region_hub(filler_region, ratings, vetoes)
+
+                if current_loc != hub:
+                    current_loc, current_date, days_used = drive_to_region(
+                        rows,
+                        current_loc,
+                        current_date,
+                        days_used,
+                        filler_region,
+                        ratings,
+                        vetoes,
+                        mpg,
+                        NODES
+                    )
+                    if days_used >= total_trip_days:
+                        break
+
+                visited_regions.add(filler_region)
+
+                rivers = get_fishable_rivers(filler_region)
+                rv = rivers[0] if rivers else None
+
+                rows.append([
+                    current_date.strftime("%b %d (%a)"),
+                    hub,
+                    f"FISH: {rv if rv else '(No Available River)'} ({filler_region})",
+                    0,
+                    0,
+                    "-"
+                ])
+
+                current_date += timedelta(days=1)
+
+            rows = finalize_return(
                 rows,
                 current_loc,
                 current_date,
-                days_used,
-                filler_region,
-                ratings,
-                vetoes,
+                total_trip_days,
                 mpg,
-                NODES
+                NODES,
+                start_date
             )
-            if days_used >= total_trip_days:
-                break
 
-        visited_regions.add(filler_region)
+            return pd.DataFrame(
+                rows,
+                columns=["Date", "Location", "Activity", "Miles", "Hrs", "Est Cost"]
+            )
 
-        rivers = get_fishable_rivers(filler_region)
-        rv = rivers[0] if rivers else None
+        # ===== 7. BUILD & DISPLAY ITINERARY =====
 
-        rows.append([
-            current_date.strftime("%b %d (%a)"),
-            hub,
-            f"FISH: {rv if rv else '(No Available River)'} ({filler_region})",
-            0,
-            0,
-            "-"
-        ])
+        st.subheader("🔮 Itinerary")
 
-        current_date += timedelta(days=1)
+        df = build_itinerary(start_date, total_trip_days, ratings, vetoes, mpg, NODES)
 
-    # ===== 5. RETURN HOME =====
-    rows = finalize_return(
-        rows,
-        current_loc,
-        current_date,
-        total_trip_days,
-        mpg,
-        NODES,
-        start_date
-    )
+        if not df.empty:
+            total_miles = df["Miles"].sum()
+            total_hours = df["Hrs"].sum()
+            fish_days = df[df["Activity"].str.contains("FISH", case=False)].shape[0]
 
-    return pd.DataFrame(
-        rows,
-        columns=["Date", "Location", "Activity", "Miles", "Hrs", "Est Cost"]
-    )
+            total_fuel = 0
+            for c in df["Est Cost"]:
+                if "$" in str(c):
+                    try:
+                        total_fuel += int(str(c).replace("$", "").replace(",", ""))
+                    except:
+                        pass
 
+            region_lookup = {
+                "Pyramid": "Pyramid",
+                "Pepperwood": "NorCal", "Maple Grove": "NorCal", "Hiouchi": "NorCal", "Eureka": "NorCal",
+                "Brookings": "Oregon", "Gold Beach": "Oregon", "Port Orford": "Oregon",
+                "Coos Bay": "Oregon", "Reedsport": "Oregon", "Steamboat": "Oregon",
+                "Forks": "OP", "Bogachiel": "OP", "Hoh": "OP", "Queets": "OP",
+                "Eagle": "Basin",
+            }
 
-# ===== 7. BUILD & DISPLAY ITINERARY =====
+            r_counts = {"Pyramid": 0, "NorCal": 0, "Oregon": 0, "OP": 0, "Basin": 0}
+            for _, row in df.iterrows():
+                loc = row["Location"]
+                reg = region_lookup.get(loc, "")
+                if reg in r_counts and "FISH" in row["Activity"]:
+                    r_counts[reg] += 1
 
-st.subheader("🔮 Itinerary")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Pyramid Days", r_counts["Pyramid"])
+            c2.metric("NorCal Days", r_counts["NorCal"])
+            c3.metric("Oregon Days", r_counts["Oregon"])
+            c4.metric("OP Days", r_counts["OP"])
+            c5.metric("Basin (Eagle) Days", r_counts["Basin"])
 
-df = build_itinerary(start_date, total_trip_days, ratings, vetoes, mpg, NODES)
+            st.divider()
 
-if not df.empty:
-    # ----- SUMMARY METRICS -----
-    total_miles = df["Miles"].sum()
-    total_hours = df["Hrs"].sum()
-    fish_days = df[df["Activity"].str.contains("FISH", case=False)].shape[0]
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Fish Days", fish_days)
+            d2.metric("Total Miles", f"{int(total_miles):,}")
+            d3.metric("Drive Hours", f"{total_hours:.1f}")
+            d4.metric("Est. Fuel", f"${total_fuel}")
 
-    total_fuel = 0
-    for c in df["Est Cost"]:
-        if "$" in str(c):
-            try:
-                total_fuel += int(str(c).replace("$", "").replace(",", ""))
-            except:
-                pass
+            df_display = df.copy()
+            df_display["Miles"] = (
+                df_display["Miles"]
+                .astype(float)
+                .round(0)
+                .astype(int)
+            )
+            df_display["Hrs"] = (
+                df_display["Hrs"]
+                .astype(float)
+                .round(1)
+            )
 
-    # ----- REGION COUNTS -----
-    region_lookup = {
-        "Pyramid": "Pyramid",
-        "Pepperwood": "NorCal", "Maple Grove": "NorCal", "Hiouchi": "NorCal", "Eureka": "NorCal",
-        "Brookings": "Oregon", "Gold Beach": "Oregon", "Port Orford": "Oregon",
-        "Coos Bay": "Oregon", "Reedsport": "Oregon", "Steamboat": "Oregon",
-        "Forks": "OP", "Bogachiel": "OP", "Hoh": "OP", "Queets": "OP",
-        "Eagle": "Basin",
-    }
+            height = (len(df_display) + 1) * 32
 
-    r_counts = {"Pyramid": 0, "NorCal": 0, "Oregon": 0, "OP": 0, "Basin": 0}
-    for _, row in df.iterrows():
-        loc = row["Location"]
-        reg = region_lookup.get(loc, "")
-        if reg in r_counts and "FISH" in row["Activity"]:
-            r_counts[reg] += 1
+            st.dataframe(
+                df_display[["Date", "Location", "Activity", "Miles", "Hrs", "Est Cost"]],
+                hide_index=True,
+                use_container_width=True,
+                height=height
+            )
+        # ===== MAP VIEW =====
 
-    # ----- REGION DAY METRICS -----
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Pyramid Days", r_counts["Pyramid"])
-    c2.metric("NorCal Days", r_counts["NorCal"])
-    c3.metric("Oregon Days", r_counts["Oregon"])
-    c4.metric("OP Days", r_counts["OP"])
-    c5.metric("Basin (Eagle) Days", r_counts["Basin"])
+        import pydeck as pdk
 
-    st.divider()
+        st.subheader("🗺️ Map View")
 
-    # ----- TRIP TOTALS -----
-    d1, d2, d3, d4 = st.columns(4)
-    d1.metric("Fish Days", fish_days)
-    d2.metric("Total Miles", f"{int(total_miles):,}")
-    d3.metric("Drive Hours", f"{total_hours:.1f}")
-    d4.metric("Est. Fuel", f"${total_fuel}")
+        with st.expander("Map View", expanded=True):
+            river_rows = []
+            for region, rivers in RIVER_SPECS.items():
+                for r in rivers:
+                    if "Lat" in r and "Lon" in r:
+                        score = auto_score_river(r["Name"], r)
+                        river_rows.append({
+                            "name": r["Name"],
+                            "lat": r["Lat"],
+                            "lon": r["Lon"],
+                            "region": region,
+                            "score": score["total"],
+                            "label": r["Name"]
+                        })
 
-    # ----- FORMAT TABLE FOR DISPLAY -----
-    df_display = df.copy()
+            df_rivers = pd.DataFrame(river_rows)
 
-    # Miles → whole numbers
-    df_display["Miles"] = (
-        df_display["Miles"]
-        .astype(float)
-        .round(0)
-        .astype(int)
-    )
+            def river_color(score):
+                t = max(0, min(score / 5, 1))
+                r = int(255 * (1 - t))
+                g = int(255 * t)
+                b = 0
+                return [r, g, b]
 
-    # Hours → 1 decimal
-    df_display["Hrs"] = (
-        df_display["Hrs"]
-        .astype(float)
-        .round(1)
-    )
+            df_rivers["color"] = df_rivers["score"].apply(river_color)
 
-    # ----- BIG HEIGHT TO AVOID INTERNAL SCROLL -----
-    height = (len(df_display) + 1) * 32  # one row ~32px
+            hub_rows = []
+            for hub, (lat, lon) in NODE_COORDS.items():
+                if hub not in ["Salt Lake", "Home"]:
+                    hub_rows.append({
+                        "hub": hub,
+                        "lat": lat,
+                        "lon": lon,
+                        "label": hub
+                    })
 
-    st.dataframe(
-        df_display[["Date", "Location", "Activity", "Miles", "Hrs", "Est Cost"]],
-        hide_index=True,
-        use_container_width=True,
-        height=height
-    )
+            df_hubs = pd.DataFrame(hub_rows)
 
-    
-# ===== MAP VIEW WITH OPENROUTESERVICE REALISTIC ROUTING =====
-import pydeck as pdk
-import math
-import requests
-import streamlit as st
-import certifi
+            travel_hubs = []
+            for _, row in df.iterrows():
+                loc = row["Location"]
+                if loc in NODE_COORDS and loc not in ["Salt Lake", "Home"]:
+                    travel_hubs.append(loc)
 
-# NOTE:
-# The app now uses offline routing from routes.json.
-# The live ORS routing function is disabled but kept for reference.
+            ordered_hubs = []
+            for h in travel_hubs:
+                if h not in ordered_hubs:
+                    ordered_hubs.append(h)
 
-# ORS_KEY = st.secrets["eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijc0MzMyOGU0YjQ2NTQxMTdiYzU5YmNhMTZjMTEwNzBhIiwiaCI6Im11cm11cjY0In0="]
+            hub_number_map = {hub: i + 1 for i, hub in enumerate(ordered_hubs)}
 
-# @st.cache_data(show_spinner=False)
-# def ors_route(p1, p2):
-#     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-#     headers = {"Authorization": ORS_KEY}
-#     body = {"coordinates": [p1, p2]}
-#
-#     r = requests.post(url, json=body, headers=headers, verify=certifi.where())
-#     data = r.json()
-#
-#     return data["features"][0]["geometry"]["coordinates"]
+            df_hubs["order"] = df_hubs["hub"].map(hub_number_map).astype("Int64")
+            df_hubs["order_label"] = df_hubs.apply(
+                lambda r: f"{int(r['order'])}. {r['hub']}" if pd.notnull(r["order"]) else r["hub"],
+                axis=1
+            )
 
-st.subheader("🗺️ Map View")
+            route_segments = []
+            for i in range(len(ordered_hubs) - 1):
+                h1 = ordered_hubs[i]
+                h2 = ordered_hubs[i + 1]
+                polyline = get_saved_route(h1, h2)
+                if polyline:
+                    route_segments.append({"path": polyline})
 
-with st.expander("Map View", expanded=True):
+            df_route = pd.DataFrame(route_segments)
 
-    # --- Build river dataframe ---
-    river_rows = []
-    for region, rivers in RIVER_SPECS.items():
-        for r in rivers:
-            if "Lat" in r and "Lon" in r:
-                score = auto_score_river(r["Name"], r)
-                river_rows.append({
-                    "name": r["Name"],
-                    "lat": r["Lat"],
-                    "lon": r["Lon"],
-                    "region": region,
-                    "score": score["total"],
-                    "label": r["Name"]   # used by TextLayer and tooltip
-                })
+            river_layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=df_rivers,
+                get_position=["lon", "lat"],
+                get_radius=100,
+                radius_min_pixels=3,
+                radius_max_pixels=12,
+                get_fill_color="color",
+                pickable=True,
+            )
 
-    df_rivers = pd.DataFrame(river_rows)
+            hub_dot_layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=df_hubs,
+                get_position=["lon", "lat"],
+                get_radius=100,
+                radius_min_pixels=4,
+                radius_max_pixels=10,
+                get_fill_color=[0, 0, 0],
+                pickable=True,
+            )
 
-    # --- River color scale (0 = bright red → 5 = bright green) ---
-    def river_color(score):
-        t = max(0, min(score / 5, 1))   # normalize 0–5 to 0–1
-        r = int(255 * (1 - t))          # red fades out
-        g = int(255 * t)                # green fades in
-        b = 0                           # remove muddy blue
-        return [r, g, b]
+            river_label_layer = pdk.Layer(
+                "TextLayer",
+                data=df_rivers,
+                get_position=["lon", "lat"],
+                get_text="label",
+                get_color=[0, 0, 0],
+                get_size=14,
+                get_alignment_baseline="'top'",
+                get_pixel_offset=[0, -10],
+            )
 
-    df_rivers["color"] = df_rivers["score"].apply(river_color)
+            route_layer = pdk.Layer(
+                "PathLayer",
+                data=df_route,
+                get_path="path",
+                get_color=[50, 50, 50],
+                width_scale=10,
+                width_min_pixels=1,
+            )
 
-    # --- Build hub dataframe (Salt Lake & Home removed) ---
-    hub_rows = []
-    for hub, (lat, lon) in NODE_COORDS.items():
-        if hub not in ["Salt Lake", "Home"]:
-            hub_rows.append({
-                "hub": hub,
-                "lat": lat,
-                "lon": lon,
-                "label": hub   # ensures tooltip never shows {label}
-            })
+            tooltip = {
+                "html": "<b>{label}</b>",
+                "style": {"backgroundColor": "black", "color": "white"}
+            }
 
-    df_hubs = pd.DataFrame(hub_rows)
+            view_state = pdk.ViewState(
+                latitude=42.5,
+                longitude=-123.5,
+                zoom=6,
+                pitch=30,
+            )
 
-    # --- Build itinerary hub sequence ---
-    travel_hubs = []
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=[river_layer, hub_dot_layer, river_label_layer, route_layer],
+                    initial_view_state=view_state,
+                    tooltip=tooltip,
+                    map_style="light"
+                )
+            )
 
-    for _, row in df.iterrows():
-        raw = row["Location"]
+        # ===== 8. CONDITIONS =====
 
-        loc = raw.replace("FISH ", "").replace("TRAVEL ", "").strip()
-        loc = loc.split("(")[0].strip()
+        st.divider()
+        st.subheader("Conditions")
 
-        LOCATION_NORMALIZE = {
-            "Eagle Lake": "Eagle",
-            "Brookings, OR": "Brookings",
-            "Gold": "Gold Beach",
-            "Port": "Port Orford",
-            "Camp": "",
-            "Rest": "",
-            "Drive": "",
-        }
+        def format_precip_text(txt: str) -> str:
+            lower = txt.lower()
+            if "between a tenth and a quarter of an inch" in lower or "between one tenth and one quarter of an inch" in lower:
+                return '💧 Precip: 0.10–0.25" possible'
+            if "between a quarter and half of an inch" in lower or "between a quarter and a half of an inch" in lower:
+                return '💧 Precip: 0.25–0.50" possible'
+            if "between half and three quarters of an inch" in lower or "between a half and three quarters of an inch" in lower:
+                return '💧 Precip: 0.50–0.75" possible'
+            if "between three quarters and one inch" in lower:
+                return '💧 Precip: 0.75–1.00" possible'
+            if "a quarter of an inch" in lower or "one quarter of an inch" in lower:
+                return '💧 Precip: 0.25" possible'
+            if "a tenth of an inch" in lower or "one tenth of an inch" in lower:
+                return '💧 Precip: 0.10" possible'
+            if "a half inch" in lower or "one half inch" in lower:
+                return '💧 Precip: 0.50" possible'
+            if "one inch possible" in lower or "around an inch" in lower:
+                return '💧 Precip: ~1.00" possible'
+            m = re.search(r"(amounts? (of|between) .+? (possible|expected))", lower)
+            if m:
+                phrase = m.group(1)
+                phrase = phrase.replace("amounts of", "").replace("amounts between", "").strip()
+                phrase = phrase.replace("a quarter", "0.25").replace("one quarter", "0.25")
+                phrase = phrase.replace("a tenth", "0.10").replace("one tenth", "0.10")
+                phrase = phrase.replace("a half", "0.5").replace("one half", "0.5")
+                phrase = phrase.replace("three quarters", "0.75")
+                phrase = phrase.replace("inches", "\"").replace("inch", "\"")
+                phrase = phrase.replace("to", "–").replace("and", "–")
+                phrase = phrase.replace("possible", "").replace("expected", "")
+                phrase = re.sub(r'\s+', ' ', phrase).strip()
+                if phrase:
+                    return f'💧 Precip: {phrase} possible'
+            if "rain" in lower or "showers" in lower:
+                return "💧 Precip: rain possible"
+            if "snow" in lower:
+                return "💧 Precip: snow possible"
+            return "💧 Precip: none or minimal"
 
-        first = loc.split()[0]
-        if first in LOCATION_NORMALIZE:
-            loc = LOCATION_NORMALIZE[first] or first
+        with st.expander("🌤️ Weather Forecast", expanded=False):
+            if st.button("🔄 Load Weather"):
+                with st.spinner("Fetching..."):
+                    t1, t2 = st.tabs(["36-Hour Detail", "5-Day Outlook"])
+                    locs = [
+                        ("Pyramid", 40.01, -119.62),
+                        ("Eureka", 40.80, -124.16),
+                        ("Crescent City", 41.75, -124.20),
+                        ("Brookings", 42.05, -124.27),
+                        ("Coos Bay", 43.36, -124.21),
+                        ("Forks", 47.95, -124.38)
+                    ]
+                    with t1:
+                        cols = st.columns(3)
+                        for i, (n, la, lo) in enumerate(locs):
+                            p = get_nws_forecast_data(la, lo)
+                            with cols[i % 3]:
+                                st.markdown(f"**{n}**")
+                                if p:
+                                    for x in p[:3]:
+                                        txt = x["detailedForecast"]
+                                        precip_clean = format_precip_text(txt)
+                                        st.caption(
+                                            f"**{x['name']}**: {x['temperature']}°F. {x['shortForecast']}\n"
+                                            f"*Wind: {x.get('windSpeed')} | {precip_clean}*"
+                                        )
+                    with t2:
+                        cols = st.columns(3)
+                        for i, (n, la, lo) in enumerate(locs):
+                            p = get_nws_forecast_data(la, lo)
+                            with cols[i % 3]:
+                                st.markdown(f"**{n}**")
+                                if p:
+                                    for x in p[:10:2]:
+                                        txt = x["detailedForecast"]
+                                        precip_clean = format_precip_text(txt)
+                                        st.caption(
+                                            f"**{x['name']}**: {x['temperature']}°F. {x['shortForecast']} {precip_clean}"
+                                        )
 
-        if loc in NODE_COORDS and loc not in ["Salt Lake", "Home"]:
-            travel_hubs.append(loc)
+        with st.expander("🌊 Live River Levels", expanded=False):
+            if st.button("🔄 Load Gauges"):
+                with st.spinner("Fetching USGS..."):
+                    for reg, rivs in RIVER_SPECS.items():
+                        st.markdown(f"**{reg}**")
+                        cols = st.columns(4)
 
-    # Remove duplicates while preserving order
-    ordered_hubs = []
-    for h in travel_hubs:
-        if h not in ordered_hubs:
-            ordered_hubs.append(h)
+                        for i, r in enumerate(rivs):
+                            with cols[i % 4]:
+                                series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=24)
+                                val = series[-1][1] if series else None
+                                ts = series[-1][0] if series else None
 
-    # --- Number hubs in travel order ---
-    hub_number_map = {hub: i+1 for i, hub in enumerate(ordered_hubs)}
+                                col = "off"
+                                s_icon = ""
 
-    df_hubs["order"] = df_hubs["hub"].map(hub_number_map).astype("Int64")
-    df_hubs["order_label"] = df_hubs.apply(
-        lambda r: f"{int(r['order'])}. {r['hub']}" if pd.notnull(r["order"]) else r["hub"],
-        axis=1
-    )
+                                try:
+                                    mn = float(r["T"].split("-")[0])
+                                    mx = float(r["T"].split("-")[1].split()[0])
+                                    reg_closed = r.get("Closed", False)
 
-    # --- Build offline realistic route segments ---
-    route_segments = []
+                                    if val is not None:
+                                        if reg_closed:
+                                            col = "inverse"
+                                            s_icon = "⛔"
+                                        elif val > mx:
+                                            col = "inverse"
+                                            s_icon = "🔴"
+                                        elif val < mn:
+                                            col = "off"
+                                            s_icon = "🟡"
+                                        else:
+                                            col = "normal"
+                                            s_icon = "🟢"
+                                except:
+                                    pass
 
-    for i in range(len(ordered_hubs) - 1):
-        h1 = ordered_hubs[i]
-        h2 = ordered_hubs[i+1]
-
-        polyline = get_saved_route(h1, h2)
-        route_segments.append({"path": polyline})
-
-    df_route = pd.DataFrame(route_segments)
-
-    # --- Layers ---
-    river_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_rivers,
-        get_position=["lon", "lat"],
-        get_radius=100,
-        radius_min_pixels=3,
-        radius_max_pixels=12,
-        get_fill_color="color",
-        pickable=True,
-    )
-
-    hub_dot_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_hubs,
-        get_position=["lon", "lat"],
-        get_radius=100,
-        radius_min_pixels=4,
-        radius_max_pixels=10,
-        get_fill_color=[0, 0, 0],  # black hubs
-        pickable=True,
-    )
-
-    river_label_layer = pdk.Layer(
-        "TextLayer",
-        data=df_rivers,
-        get_position=["lon", "lat"],
-        get_text="label",
-        get_color=[0, 0, 0],
-        get_size=14,
-        get_alignment_baseline="'top'",
-        get_pixel_offset=[0, -10],
-    )
-
-    route_layer = pdk.Layer(
-        "PathLayer",
-        data=df_route,
-        get_path="path",
-        get_color=[50, 50, 50],  # charcoal grey
-        width_scale=10,
-        width_min_pixels=1,
-    )
-
-    tooltip = {
-        "html": "<b>{label}</b>",
-        "style": {"backgroundColor": "black", "color": "white"}
-    }
-
-    view_state = pdk.ViewState(
-        latitude=42.5,
-        longitude=-123.5,
-        zoom=6,
-        pitch=30,
-    )
-
-    st.pydeck_chart(
-        pdk.Deck(
-            layers=[river_layer, hub_dot_layer, river_label_layer, route_layer],
-            initial_view_state=view_state,
-            tooltip=tooltip,
-            map_style="light"
-        )
-    )
-
-# ===== 8. CONDITIONS =====
-
-st.divider()
-st.subheader("Conditions")
-
-def format_precip_text(txt: str) -> str:
-    lower = txt.lower()
-    if "between a tenth and a quarter of an inch" in lower or "between one tenth and one quarter of an inch" in lower:
-        return '💧 Precip: 0.10–0.25" possible'
-    if "between a quarter and half of an inch" in lower or "between a quarter and a half of an inch" in lower:
-        return '💧 Precip: 0.25–0.50" possible'
-    if "between half and three quarters of an inch" in lower or "between a half and three quarters of an inch" in lower:
-        return '💧 Precip: 0.50–0.75" possible'
-    if "between three quarters and one inch" in lower:
-        return '💧 Precip: 0.75–1.00" possible'
-    if "a quarter of an inch" in lower or "one quarter of an inch" in lower:
-        return '💧 Precip: 0.25" possible'
-    if "a tenth of an inch" in lower or "one tenth of an inch" in lower:
-        return '💧 Precip: 0.10" possible'
-    if "a half inch" in lower or "one half inch" in lower:
-        return '💧 Precip: 0.50" possible'
-    if "one inch possible" in lower or "around an inch" in lower:
-        return '💧 Precip: ~1.00" possible'
-    m = re.search(r"(amounts? (of|between) .+? (possible|expected))", lower)
-    if m:
-        phrase = m.group(1)
-        phrase = phrase.replace("amounts of", "").replace("amounts between", "").strip()
-        phrase = phrase.replace("a quarter", "0.25").replace("one quarter", "0.25")
-        phrase = phrase.replace("a tenth", "0.10").replace("one tenth", "0.10")
-        phrase = phrase.replace("a half", "0.5").replace("one half", "0.5")
-        phrase = phrase.replace("three quarters", "0.75")
-        phrase = phrase.replace("inches", '"').replace("inch", '"')
-        phrase = phrase.replace("to", "–").replace("and", "–")
-        phrase = phrase.replace("possible", "").replace("expected", "")
-        phrase = re.sub(r'\s+', ' ', phrase).strip()
-        if phrase:
-            return f'💧 Precip: {phrase} possible'
-    if "rain" in lower or "showers" in lower:
-        return "💧 Precip: rain possible"
-    if "snow" in lower:
-        return "💧 Precip: snow possible"
-    return "💧 Precip: none or minimal"
-
-with st.expander("🌤️ Weather Forecast", expanded=False):
-    if st.button("🔄 Load Weather"):
-        with st.spinner("Fetching..."):
-            t1, t2 = st.tabs(["36-Hour Detail", "5-Day Outlook"])
-            locs = [
-                ("Pyramid", 40.01, -119.62),
-                ("Eureka", 40.80, -124.16),
-                ("Crescent City", 41.75, -124.20),
-                ("Brookings", 42.05, -124.27),
-                ("Coos Bay", 43.36, -124.21),
-                ("Forks", 47.95, -124.38)
-            ]
-            with t1:
-                cols = st.columns(3)
-                for i, (n, la, lo) in enumerate(locs):
-                    p = get_nws_forecast_data(la, lo)
-                    with cols[i % 3]:
-                        st.markdown(f"**{n}**")
-                        if p:
-                            for x in p[:3]:
-                                txt = x["detailedForecast"]
-                                precip_clean = format_precip_text(txt)
-                                st.caption(
-                                    f"**{x['name']}**: {x['temperature']}°F. {x['shortForecast']}\n"
-                                    f"*Wind: {x.get('windSpeed')} | {precip_clean}*"
-                                )
-            with t2:
-                cols = st.columns(3)
-                for i, (n, la, lo) in enumerate(locs):
-                    p = get_nws_forecast_data(la, lo)
-                    with cols[i % 3]:
-                        st.markdown(f"**{n}**")
-                        if p:
-                            for x in p[:10:2]:
-                                txt = x["detailedForecast"]
-                                precip_clean = format_precip_text(txt)
-                                st.caption(
-                                    f"**{x['name']}**: {x['temperature']}°F. {x['shortForecast']} {precip_clean}"
+                                ts_display = ts.astimezone().strftime("%m-%d %H:%M") if ts else ""
+                                st.metric(
+                                    f"{s_icon} {r['Name']}",
+                                    val if val is not None else "--",
+                                    r["T"],
+                                    delta_color=col
                                 )
 
-with st.expander("🌊 Live River Levels", expanded=False):
-    if st.button("🔄 Load Gauges"):
-        with st.spinner("Fetching USGS..."):
-            for reg, rivs in RIVER_SPECS.items():
-                st.markdown(f"**{reg}**")
-                cols = st.columns(4)
+                                try:
+                                    pts = len(series)
+                                    if pts < 4:
+                                        confidence = "Low"
+                                    elif pts < 12:
+                                        confidence = "Medium"
+                                    else:
+                                        confidence = "High"
+                                except:
+                                    confidence = "Low"
 
-                for i, r in enumerate(rivs):
-                    with cols[i % 4]:
+                                st.caption(f"{r['N']} | {ts_display} | Confidence: {confidence}")
 
-                        # --- Fetch USGS series (24–48 hours) ---
-                        series = get_usgs_series(r["ID"], r.get("P", "00060"), hours=24)
-                        val = series[-1][1] if series else None
-                        ts = series[-1][0] if series else None
+                                try:
+                                    values = [v for (_, v) in series]
+                                    if len(values) >= 2:
+                                        bar = ""
+                                        for a, b in zip(values[-10:], values[-9:]):
+                                            if b > a:
+                                                bar += "📈"
+                                            elif b < a:
+                                                bar += "📉"
+                                            else:
+                                                bar += "🟨"
+                                        st.caption(f"24h Trend: {bar}")
+                                except:
+                                    pass
 
-                        # default: no color, no icon
-                        col = "off"
-                        s_icon = ""
-
-                        # --- Flow condition classification ---
-                        try:
-                            mn = float(r["T"].split("-")[0])
-                            mx = float(r["T"].split("-")[1].split()[0])
-                            reg_closed = r.get("Closed", False)
-
-                            if val is not None:
-                                if reg_closed:
-                                    col = "inverse"
-                                    s_icon = "⛔"
-                                elif val > mx:
-                                    col = "inverse"
-                                    s_icon = "🔴"
-                                elif val < mn:
-                                    col = "off"
-                                    s_icon = "🟡"
-                                else:
-                                    col = "normal"
-                                    s_icon = "🟢"
-                        except:
-                            pass
-
-                        # --- Display main metric ---
-                        ts_display = ts.astimezone().strftime("%m-%d %H:%M") if ts else ""
-                        st.metric(
-                            f"{s_icon} {r['Name']}",
-                            val if val is not None else "--",
-                            r["T"],
-                            delta_color=col
+        with st.expander("📉 Hydrographs", expanded=False):
+            if st.button("Load Charts"):
+                all_ids = []
+                for reg, rivs in RIVER_SPECS.items():
+                    for r in rivs:
+                        all_ids.append((r["ID"], r.get("P", "00060"), r["Name"]))
+                cols = st.columns(2)
+                for i, (s, p, n) in enumerate(all_ids):
+                    with cols[i % 2]:
+                        st.write(f"**{n}**")
+                        st.image(
+                            f"https://waterdata.usgs.gov/nwisweb/graph?agency_cd=USGS&site_no={s}&parm_cd={p}&period=7",
+                            use_container_width=True
                         )
 
-                        # --- Confidence indicator ---
-                        try:
-                            pts = len(series)
-                            if pts < 4:
-                                confidence = "Low"
-                            elif pts < 12:
-                                confidence = "Medium"
-                            else:
-                                confidence = "High"
-                        except:
-                            confidence = "Low"
+        # ===== 11. DEBUG PANEL =====
 
-                        st.caption(f"{r['N']} | {ts_display} | Confidence: {confidence}")
+        with st.expander("🛠️ Debug: Raw Ratings & Allocations", expanded=False):
+            st.write("**Ratings:**", ratings)
+            st.write("**Vetoes:**", vetoes)
 
-	                          # --- Directional bar chart (up/down arrows) ---
-                        try:
-                            values = [v for (_, v) in series]
-                            if len(values) >= 2:
-                                bar = ""
-                                for a, b in zip(values[-10:], values[-9:]):
-                                    if b > a:
-                                        bar += "📈"
-                                    elif b < a:
-                                        bar += "📉"
-                                    else:
-                                        bar += "🟨"
-                                st.caption(f"24h Trend: {bar}")
-                        except:
-                            pass
+            regions, op_only = detect_trip_regions(ratings, vetoes)
+            st.write("**Detected Regions:**", regions)
+            st.write("**OP Only:**", op_only)
+
+            seq = build_region_sequence(vetoes, ratings)
+            st.write("**Region Sequence:**", seq)
+
+            alloc = allocate_days(total_trip_days, seq, ratings, vetoes)
+            st.write("**Day Allocation:**", alloc)
+
+            st.write("**Directional River Sequences:**")
+            for reg in seq:
+                if reg not in ["Pyramid", "Eagle"]:
+                    st.write(reg, allocate_rivers_in_region(reg, alloc.get(reg, 0), ratings, vetoes))
+
+    # END OF PLANNER
 
 
-with st.expander("📉 Hydrographs", expanded=False):
-    if st.button("Load Charts"):
-        all_ids = []
-        for reg, rivs in RIVER_SPECS.items():
-            for r in rivs:
-                all_ids.append((r["ID"], r.get("P", "00060"), r["Name"]))
-        cols = st.columns(2)
-        for i, (s, p, n) in enumerate(all_ids):
-            with cols[i % 2]:
-                st.write(f"**{n}**")
-                st.image(
-                    f"https://waterdata.usgs.gov/nwisweb/graph?agency_cd=USGS&site_no={s}&parm_cd={p}&period=7",
-                    use_container_width=True
-                )
-   
+# ===== COASTAL CONDITIONS DASHBOARD =====
+elif mode == "Coastal Dashboard":
+    st.title("🌊 Coastal Conditions Dashboard")
 
+    # --- COASTAL RIVER SPECS BY REGION (ASSUMED USGS IDS, ESTIMATED WINDOWS) ---
+    # DrainArea used where neighbor scaling is most useful.
 
-# ===== 11. DEBUG PANEL =====
+    COASTAL_NORCAL = [
+        {
+            "Name": "Smith River (CA)",
+            "ID": "11532500",
+            "P": "00060",
+            "T": "1200-8000 cfs",
+            "Low": 600,
+            "N": "Holy Grail. Tidewater to Craigs; short sharp windows.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "CAC01",
+        },
+        {
+            "Name": "Middle Fork Smith",
+            "ID": "11532600",
+            "P": "00060",
+            "T": "600-2500 cfs",
+            "Low": 350,
+            "N": "Smaller, clearer than main; greens up sooner.",
+            "Type": "flashy",
+            "DrainArea": 300,
+            "NOAA_zone": "CAC01",
+        },
+        {
+            "Name": "Mattole",
+            "ID": "11469000",
+            "P": "00060",
+            "T": "600-2200 cfs",
+            "Low": 300,
+            "N": "Remote, windy; blows fast, drops fast.",
+            "Type": "flashy",
+            "DrainArea": 260,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "Van Duzen",
+            "ID": "11478500",
+            "P": "00060",
+            "T": "300-1400 cfs",
+            "Low": 150,
+            "N": "Dirty Van; chocolate early, then money green.",
+            "Type": "flashy",
+            "DrainArea": 430,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "South Fork Eel",
+            "ID": "11476500",
+            "P": "00060",
+            "T": "400-2200 cfs",
+            "Low": 340,
+            "N": "Clears faster than main; classic NorCal swing/drift.",
+            "Type": "mixed",
+            "DrainArea": 680,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "Eel (Mainstem)",
+            "ID": "11477000",
+            "P": "00060",
+            "T": "2000-9000 cfs",
+            "Low": 350,
+            "N": "Scotia gauge; huge water, long color lag.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "Mad River",
+            "ID": "11481000",
+            "P": "00060",
+            "T": "500-2500 cfs",
+            "Low": 300,
+            "N": "Close to town; quick to blow and quick to fish.",
+            "Type": "flashy",
+            "DrainArea": 485,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "Redwood Creek",
+            "ID": "11481500",
+            "P": "00060",
+            "T": "400-1500 cfs",
+            "Low": 250,
+            "N": "Sand‑choked mouth; small but very storm‑sensitive.",
+            "Type": "flashy",
+            "DrainArea": 280,
+            "NOAA_zone": "CAC02",
+        },
+        {
+            "Name": "Navarro",
+            "ID": "11468000",
+            "P": "00060",
+            "T": "350-1500 cfs",
+            "Low": 250,
+            "N": "Mendo anchor; bar dynamics and tides matter.",
+            "Type": "mixed",
+            "DrainArea": 300,
+            "NOAA_zone": "CAC03",
+        },
+        {
+            "Name": "Garcia",
+            "ID": "11467510",
+            "P": "00060",
+            "T": "250-1100 cfs",
+            "Low": 200,
+            "N": "Small coastal creek feel; tight windows.",
+            "Type": "flashy",
+            "DrainArea": 180,
+            "NOAA_zone": "CAC03",
+        },
+        {
+            "Name": "Gualala",
+            "ID": "11467500",
+            "P": "00060",
+            "T": "250-1200 cfs",
+            "Low": 200,
+            "N": "Bar‑dependent; delicate clarity swings.",
+            "Type": "flashy",
+            "DrainArea": 290,
+            "NOAA_zone": "CAC03",
+        },
+    ]
 
-with st.expander("🛠️ Debug: Raw Ratings & Allocations", expanded=False):
-    st.write("**Ratings:**", ratings)
-    st.write("**Vetoes:**", vetoes)
+    COASTAL_SOUTH_OR = [
+        {
+            "Name": "Winchuck",
+            "ID": "14401300",
+            "P": "00060",
+            "T": "250-900 cfs",
+            "Low": 200,
+            "N": "Tiny, brushy; blows and clears almost overnight.",
+            "Type": "flashy",
+            "DrainArea": 70,
+            "NOAA_zone": "ORC01",
+        },
+        {
+            "Name": "Chetco",
+            "ID": "14400000",
+            "P": "00060",
+            "T": "1200-4500 cfs",
+            "Low": 800,
+            "N": "Clear blue; short prime window mid‑drop.",
+            "Type": "flashy",
+            "DrainArea": 352,
+            "NOAA_zone": "ORC01",
+        },
+        {
+            "Name": "Pistol",
+            "ID": "14401500",
+            "P": "00060",
+            "T": "300-1100 cfs",
+            "Low": 250,
+            "N": "Pocket scale; strong bar effects and wind.",
+            "Type": "flashy",
+            "DrainArea": 140,
+            "NOAA_zone": "ORC01",
+        },
+        {
+            "Name": "Rogue (Agness)",
+            "ID": "14372300",
+            "P": "00060",
+            "T": "2500-8000 cfs",
+            "Low": 1500,
+            "N": "Main coastal workhorse; different plays by reach.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "ORC01",
+        },
+        {
+            "Name": "Illinois",
+            "ID": "14384000",
+            "P": "00060",
+            "T": "1000-4000 cfs",
+            "Low": 800,
+            "N": "Wild canyon water; color lags local rain.",
+            "Type": "mixed",
+            "DrainArea": 1000,
+            "NOAA_zone": "ORC01",
+        },
+        {
+            "Name": "Elk",
+            "ID": "14338000",
+            "P": "00065",
+            "T": "3.6-5.6 ft",
+            "Low": 3.2,
+            "N": "Clear south‑coast jewel; tiny but potent.",
+            "Type": "flashy",
+            "DrainArea": 90,
+            "NOAA_zone": "ORC02",
+        },
+        {
+            "Name": "Sixes",
+            "ID": "14327150",
+            "P": "00065",
+            "T": "4.2-7.2 ft",
+            "Low": 3.5,
+            "N": "Tea‑stained; a bit more forgiving than Elk.",
+            "Type": "flashy",
+            "DrainArea": 120,
+            "NOAA_zone": "ORC02",
+        },
+        {
+            "Name": "Floras/New River",
+            "ID": "14325040",
+            "P": "00060",
+            "T": "300-1100 cfs",
+            "Low": 200,
+            "N": "Windy, bar‑sensitive, lots of sand movement.",
+            "Type": "flashy",
+            "DrainArea": 150,
+            "NOAA_zone": "ORC02",
+        },
+    ]
 
-    regions, op_only = detect_trip_regions(ratings, vetoes)
-    st.write("**Detected Regions:**", regions)
-    st.write("**OP Only:**", op_only)
+    COASTAL_CENTRAL_OR = [
+        {
+            "Name": "South Fork Coquille",
+            "ID": "14324200",
+            "P": "00060",
+            "T": "800-2800 cfs",
+            "Low": 600,
+            "N": "Classic drift water; good mid‑drop.",
+            "Type": "mixed",
+            "DrainArea": 310,
+            "NOAA_zone": "ORC03",
+        },
+        {
+            "Name": "North Fork Coquille",
+            "ID": "14325020",
+            "P": "00060",
+            "T": "600-2200 cfs",
+            "Low": 450,
+            "N": "Smaller, slightly clearer than SF Coquille.",
+            "Type": "mixed",
+            "DrainArea": 260,
+            "NOAA_zone": "ORC03",
+        },
+        {
+            "Name": "Coquille (Mainstem)",
+            "ID": "14326500",
+            "P": "00060",
+            "T": "2500-8500 cfs",
+            "Low": 1600,
+            "N": "Tidewater to Bandon; tide + wind modulate conditions.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "ORC03",
+        },
+        {
+            "Name": "Coos/Millicoma",
+            "ID": "14325000",
+            "P": "00060",
+            "T": "700-2600 cfs",
+            "Low": 500,
+            "N": "Millicoma forks feed Coos tidal reach.",
+            "Type": "mixed",
+            "DrainArea": 340,
+            "NOAA_zone": "ORC03",
+        },
+        {
+            "Name": "Tenmile",
+            "ID": "14325070",
+            "P": "00060",
+            "T": "250-900 cfs",
+            "Low": 200,
+            "N": "Short coastal creek; influenced by lakes and sand.",
+            "Type": "flashy",
+            "DrainArea": 110,
+            "NOAA_zone": "ORC03",
+        },
+        {
+            "Name": "Umpqua (Mainstem)",
+            "ID": "14321000",
+            "P": "00060",
+            "T": "4500-13000 cfs",
+            "Low": 3000,
+            "N": "Anchor system; tidewater swing to Elkton drifts.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "ORC04",
+        },
+        {
+            "Name": "North Umpqua",
+            "ID": "14319500",
+            "P": "00060",
+            "T": "1200-4000 cfs",
+            "Low": 900,
+            "N": "Colder, regulated; clarity holds better after storms.",
+            "Type": "mixed",
+            "DrainArea": 1300,
+            "NOAA_zone": "ORC04",
+        },
+    ]
 
-    seq = build_region_sequence(vetoes, ratings)
-    st.write("**Region Sequence:**", seq)
+    COASTAL_NORTH_OR = [
+        {
+            "Name": "Siuslaw",
+            "ID": "14141500",
+            "P": "00060",
+            "T": "1000-3500 cfs",
+            "Low": 800,
+            "N": "Dune country; lots of tidewater options.",
+            "Type": "mixed",
+            "DrainArea": 610,
+            "NOAA_zone": "ORC05",
+        },
+        {
+            "Name": "Alsea",
+            "ID": "14306500",
+            "P": "00060",
+            "T": "700-2500 cfs",
+            "Low": 500,
+            "N": "Compact basin; greens quickly after moderate storms.",
+            "Type": "mixed",
+            "DrainArea": 470,
+            "NOAA_zone": "ORC05",
+        },
+        {
+            "Name": "Siletz",
+            "ID": "14305000",
+            "P": "00060",
+            "T": "900-2800 cfs",
+            "Low": 650,
+            "N": "Popular hatchery river; strong clarity signal.",
+            "Type": "mixed",
+            "DrainArea": 360,
+            "NOAA_zone": "ORC05",
+        },
+        {
+            "Name": "Salmon (OR)",
+            "ID": "14305500",
+            "P": "00060",
+            "T": "400-1400 cfs",
+            "Low": 300,
+            "N": "Smaller neighbor to Siletz; tighter windows.",
+            "Type": "flashy",
+            "DrainArea": 160,
+            "NOAA_zone": "ORC05",
+        },
+        {
+            "Name": "Nestucca",
+            "ID": "14304500",
+            "P": "00060",
+            "T": "900-3200 cfs",
+            "Low": 700,
+            "N": "Deep gut runs; great on upper‑green drop.",
+            "Type": "mixed",
+            "DrainArea": 300,
+            "NOAA_zone": "ORC06",
+        },
+        {
+            "Name": "Three Rivers",
+            "ID": "14304200",
+            "P": "00060",
+            "T": "200-800 cfs",
+            "Low": 180,
+            "N": "Short hatchery creek into Nestucca; quick reaction.",
+            "Type": "flashy",
+            "DrainArea": 50,
+            "NOAA_zone": "ORC06",
+        },
+        {
+            "Name": "Little Nestucca",
+            "ID": "14305080",
+            "P": "00060",
+            "T": "300-1200 cfs",
+            "Low": 250,
+            "N": "Tide flats and small drift water; neighbor to Big Nestucca.",
+            "Type": "flashy",
+            "DrainArea": 120,
+            "NOAA_zone": "ORC06",
+        },
+        {
+            "Name": "Wilson",
+            "ID": "14301500",
+            "P": "00060",
+            "T": "900-3200 cfs",
+            "Low": 700,
+            "N": "Tillamook anchor; clears relatively fast.",
+            "Type": "mixed",
+            "DrainArea": 190,
+            "NOAA_zone": "ORC07",
+        },
+        {
+            "Name": "Trask",
+            "ID": "14301000",
+            "P": "00060",
+            "T": "800-2600 cfs",
+            "Low": 600,
+            "N": "Glassy tailouts; good bank options at moderate flows.",
+            "Type": "mixed",
+            "DrainArea": 170,
+            "NOAA_zone": "ORC07",
+        },
+        {
+            "Name": "Kilchis",
+            "ID": "14300500",
+            "P": "00060",
+            "T": "500-1800 cfs",
+            "Low": 350,
+            "N": "Colder, clearer; greens up earliest in Tillamook set.",
+            "Type": "flashy",
+            "DrainArea": 95,
+            "NOAA_zone": "ORC07",
+        },
+        {
+            "Name": "Miami",
+            "ID": "14299700",
+            "P": "00060",
+            "T": "250-900 cfs",
+            "Low": 200,
+            "N": "Smallest Tillamook creek; super short windows.",
+            "Type": "flashy",
+            "DrainArea": 40,
+            "NOAA_zone": "ORC07",
+        },
+        {
+            "Name": "Nehalem",
+            "ID": "14301050",
+            "P": "00060",
+            "T": "1600-5500 cfs",
+            "Low": 1100,
+            "N": "Large, tannic; slower clarity than Tillamook trio.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "ORC08",
+        },
+        {
+            "Name": "North Fork Nehalem",
+            "ID": "14301200",
+            "P": "00060",
+            "T": "400-1500 cfs",
+            "Low": 300,
+            "N": "Small hatchery river with shorter windows.",
+            "Type": "flashy",
+            "DrainArea": 110,
+            "NOAA_zone": "ORC08",
+        },
+        {
+            "Name": "Necanicum",
+            "ID": "14301550",
+            "P": "00060",
+            "T": "300-1200 cfs",
+            "Low": 250,
+            "N": "Coastal creek near Seaside; very storm‑sensitive.",
+            "Type": "flashy",
+            "DrainArea": 90,
+            "NOAA_zone": "ORC08",
+        },
+    ]
 
-    alloc = allocate_days(total_trip_days, seq, ratings, vetoes)
-    st.write("**Day Allocation:**", alloc)
+    COASTAL_WA_COAST = [
+        {
+            "Name": "Willapa",
+            "ID": "12010000",
+            "P": "00060",
+            "T": "800-2600 cfs",
+            "Low": 600,
+            "N": "Tidal bay system; many small tribs feed main.",
+            "Type": "mixed",
+            "DrainArea": 350,
+            "NOAA_zone": "WAC01",
+        },
+        {
+            "Name": "North River",
+            "ID": "12011000",
+            "P": "00060",
+            "T": "400-1500 cfs",
+            "Low": 300,
+            "N": "Small coastal river S of Grays Harbor.",
+            "Type": "flashy",
+            "DrainArea": 140,
+            "NOAA_zone": "WAC01",
+        },
+        {
+            "Name": "Humptulips",
+            "ID": "12039005",
+            "P": "00060",
+            "T": "1000-3500 cfs",
+            "Low": 800,
+            "N": "East/West forks feed a strong main; big swings.",
+            "Type": "mixed",
+            "DrainArea": 320,
+            "NOAA_zone": "WAC02",
+        },
+        {
+            "Name": "Wynoochee",
+            "ID": "12037400",
+            "P": "00060",
+            "T": "700-2500 cfs",
+            "Low": 550,
+            "N": "Partly regulated; holds green a bit longer.",
+            "Type": "mixed",
+            "DrainArea": 190,
+            "NOAA_zone": "WAC02",
+        },
+        {
+            "Name": "Satsop",
+            "ID": "12035000",
+            "P": "00060",
+            "T": "900-3200 cfs",
+            "Low": 700,
+            "N": "Multiple forks; strong hatchery presence.",
+            "Type": "mixed",
+            "DrainArea": 320,
+            "NOAA_zone": "WAC02",
+        },
+        {
+            "Name": "Wishkah",
+            "ID": "12036500",
+            "P": "00060",
+            "T": "400-1400 cfs",
+            "Low": 300,
+            "N": "Smaller Grays Harbor trib; quick to move.",
+            "Type": "flashy",
+            "DrainArea": 95,
+            "NOAA_zone": "WAC02",
+        },
+        {
+            "Name": "Hoquiam",
+            "ID": "12037000",
+            "P": "00060",
+            "T": "300-1200 cfs",
+            "Low": 250,
+            "N": "Short, tidal; more weather‑exposed than most.",
+            "Type": "flashy",
+            "DrainArea": 85,
+            "NOAA_zone": "WAC02",
+        },
+        {
+            "Name": "Johns River",
+            "ID": "12015500",
+            "P": "00060",
+            "T": "200-800 cfs",
+            "Low": 180,
+            "N": "Small coastal creek into South Bay.",
+            "Type": "flashy",
+            "DrainArea": 60,
+            "NOAA_zone": "WAC02",
+        },
+    ]
 
-    st.write("**Directional River Sequences:**")
-    for reg in seq:
-        if reg not in ["Pyramid", "Eagle"]:
-            st.write(reg, allocate_rivers_in_region(reg, alloc.get(reg, 0), ratings, vetoes))
+    COASTAL_OP = [
+        {
+            "Name": "Bogachiel",
+            "ID": "12043000",
+            "P": "00060",
+            "T": "700-2800 cfs",
+            "Low": 400,
+            "N": "OP anchor; good clarity even with active storms.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "WAC03",
+        },
+        {
+            "Name": "Calawah",
+            "ID": "12043300",
+            "P": "00060",
+            "T": "400-1600 cfs",
+            "Low": 250,
+            "N": "Steeper and flashier than Bogi; quick drop windows.",
+            "Type": "flashy",
+            "DrainArea": 160,
+            "NOAA_zone": "WAC03",
+        },
+        {
+            "Name": "Sol Duc",
+            "ID": "12043015",
+            "P": "00060",
+            "T": "600-2400 cfs",
+            "Low": 350,
+            "N": "Green glacial flavor; good swing structure.",
+            "Type": "mixed",
+            "DrainArea": 220,
+            "NOAA_zone": "WAC03",
+        },
+        {
+            "Name": "Dickey",
+            "ID": "12042800",
+            "P": "00060",
+            "T": "300-1100 cfs",
+            "Low": 220,
+            "N": "Small OP trib; tight windows, sneaky clarity.",
+            "Type": "flashy",
+            "DrainArea": 90,
+            "NOAA_zone": "WAC03",
+        },
+        {
+            "Name": "Quillayute",
+            "ID": "12043010",
+            "P": "00060",
+            "T": "1500-5500 cfs",
+            "Low": 1000,
+            "N": "Outlet of Bogi/Sol Duc/Dickey; smoothed hydrograph.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "WAC03",
+        },
+        {
+            "Name": "Hoh",
+            "ID": "12041200",
+            "P": "00060",
+            "T": "1300-4500 cfs",
+            "Low": 800,
+            "N": "Glacial; wide green zone but color varies by arm.",
+            "Type": "glacial",
+            "DrainArea": None,
+            "NOAA_zone": "WAC04",
+        },
+        {
+            "Name": "Queets",
+            "ID": "12040500",
+            "P": "00060",
+            "T": "2500-9000 cfs",
+            "Low": 1500,
+            "N": "Huge, wild; road closures/weather often gate access.",
+            "Type": "glacial",
+            "DrainArea": None,
+            "NOAA_zone": "WAC04",
+        },
+        {
+            "Name": "Clearwater",
+            "ID": "12039300",
+            "P": "00060",
+            "T": "400-1500 cfs",
+            "Low": 300,
+            "N": "Tea‑stained Queets trib; clearer than mainstem.",
+            "Type": "flashy",
+            "DrainArea": 170,
+            "NOAA_zone": "WAC04",
+        },
+        {
+            "Name": "Quinault",
+            "ID": "12039500",
+            "P": "00060",
+            "T": "2000-7500 cfs",
+            "Low": 1400,
+            "N": "Lake‑mediated; smoother hydrograph, rich swing water.",
+            "Type": "big",
+            "DrainArea": None,
+            "NOAA_zone": "WAC04",
+        },
+    ]
+
+    COASTAL_RIVER_SPECS = {
+        "NorCal": COASTAL_NORCAL,
+        "Southern Oregon Coast": COASTAL_SOUTH_OR,
+        "Central Oregon Coast": COASTAL_CENTRAL_OR,
+        "Northern Oregon Coast": COASTAL_NORTH_OR,
+        "Washington Coast": COASTAL_WA_COAST,
+        "Olympic Peninsula": COASTAL_OP,
+    }
+
+    # --- FILTER BAR (GLOBAL) ---
+
+    st.caption("Read‑only coastal steelhead conditions. Global filters apply to all regions.")
+
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns([1, 1, 1, 1, 1])
+    with col_f1:
+        show_in_shape_only = st.checkbox("In shape only", value=False)
+    with col_f2:
+        show_trending_down = st.checkbox("Trending down", value=False)
+    with col_f3:
+        show_trending_up = st.checkbox("Trending up", value=False)
+    with col_f4:
+        hide_blown_out = st.checkbox("Hide blown out", value=True)
+    with col_f5:
+        high_conf_only = st.checkbox("High confidence only", value=False)
+
+    # --- SUPPORT FUNCTIONS FOR CONDITIONS BOARD ---
+
+    def classify_condition(spec, last_val):
+        """
+        Return (condition_text, color_hex, color_flag)
+        color_flag is for future use ('normal' vs 'inverse').
+        """
+        if last_val is None:
+            return "no data", "#888888", "off"
+
+        low_limit = spec.get("Low", 0)
+        t_low, t_high = parse_target_range(spec.get("T", ""))
+
+        # Below legal
+        if last_val < low_limit:
+            return "below legal", "#AA0000", "inverse"
+
+        # No target window set
+        if t_low is None or t_high is None:
+            return "no target window", "#888888", "off"
+
+        # Below target window
+        if last_val < t_low:
+            # low = yellow
+            return "low", "#F1C40F", "off"
+
+        # Slightly high vs blown out
+        if last_val > t_high:
+            if last_val <= t_high * 1.25:
+                return "slightly high", "#E67E22", "inverse"
+            else:
+                return "blown out", "#E74C3C", "inverse"
+
+        # Within target window
+        return "in shape", "#2ECC71", "normal"
+
+    def compute_trend_and_cycle(series):
+        """Return (arrow, trend_text, pct_change, storm_cycle, color_hex)."""
+        if not series or len(series) < 2:
+            return "↔", "stable", 0.0, "Stable", "#CCCCCC"
+
+        series = sorted(series, key=lambda x: x[0])
+        first = series[0][1]
+        last = series[-1][1]
+        if first <= 0:
+            return "↔", "stable", 0.0, "Stable", "#CCCCCC"
+
+        pct = ((last - first) / first) * 100.0
+
+        if pct <= -20:
+            return "↓↓", "dropping fast", pct, "Dropping", "#2ECC71"
+        if -20 < pct <= -8:
+            return "↓", "dropping", pct, "Dropping", "#27AE60"
+        if 8 <= pct < 20:
+            return "↑", "rising", pct, "Rising", "#E67E22"
+        if pct >= 20:
+            return "↑↑", "rising fast", pct, "Rising", "#E74C3C"
+
+        return "↔", "stable", pct, "Stable", "#CCCCCC"
+
+    def compute_confidence(series):
+        """Heuristic confidence based on number of samples."""
+        try:
+            n = len(series)
+        except Exception:
+            return "Low"
+        if n < 4:
+            return "Low"
+        if n < 12:
+            return "Medium"
+        return "High"
+
+    def get_auto_score_for_coastal(spec):
+        """
+        Prefer the spec from your main RIVER_SPECS if present,
+        otherwise use this spec directly as a fallback.
+        """
+        for region, rivers in RIVER_SPECS.items():
+            for base in rivers:
+                if base["Name"] == spec["Name"]:
+                    return auto_score_river(base["Name"], base)
+        return auto_score_river(spec["Name"], spec)
+
+    def get_noaa_precip_for_spec(spec):
+        """
+        Optional NOAA QPF integration hook.
+        If you already have a function like get_noaa_qpf(spec),
+        this wrapper will call it; otherwise it returns None values
+        so the UI can still render without breaking.
+        """
+        if "get_noaa_qpf" in globals():
+            try:
+                return get_noaa_qpf(spec)
+            except Exception:
+                pass
+        # Fallback: no precip data
+        return {
+            "qpf_6h": None,
+            "qpf_24h": None,
+            "qpf_48h": None,
+            "qpf_72h": None,
+            "trend": None,       # "Rising", "Falling", "Stable"
+            "zone": spec.get("NOAA_zone"),
+        }
+
+    def passes_filters(cond_text, arrow, confidence):
+        """Apply global filters to a river."""
+        if show_in_shape_only and cond_text != "in shape":
+            return False
+        if show_trending_down and arrow not in ("↓", "↓↓"):
+            return False
+        if show_trending_up and arrow not in ("↑", "↑↑"):
+            return False
+        if hide_blown_out and cond_text == "blown out":
+            return False
+        if high_conf_only and confidence != "High":
+            return False
+        return True
+
+    def format_precip_str(qpf):
+        """Compact string for precip display."""
+        q24 = qpf.get("qpf_24h")
+        q48 = qpf.get("qpf_48h")
+        trend = qpf.get("trend")
+        zone = qpf.get("zone")
+
+        parts = []
+        if q24 is not None:
+            parts.append(f"24h: {q24:.2f}\"")
+        if q48 is not None:
+            parts.append(f"48h: {q48:.2f}\"")
+        if trend:
+            parts.append(f"Trend: {trend}")
+        if zone:
+            parts.append(f"NOAA: {zone}")
+
+        return " | ".join(parts) if parts else ""
+
+    def render_river_row(spec):
+        """Two-line view for a single river."""
+        name = spec["Name"]
+        site_id = spec["ID"]
+        param = spec.get("P", "00060")
+
+        series = get_usgs_series(site_id, param, hours=24)
+        last_val = series[-1][1] if series else None
+        ts = series[-1][0] if series else None
+
+        cond_text, cond_color, _ = classify_condition(spec, last_val)
+        arrow, trend_text, pct_change, storm_cycle, trend_color = compute_trend_and_cycle(series)
+        confidence = compute_confidence(series)
+
+        if not passes_filters(cond_text, arrow, confidence):
+            return
+
+        score = get_auto_score_for_coastal(spec)
+        total_score = score["total"]
+        flow_score = score["flow"]
+        trend_score = score["trend"]
+        weather_score = score["weather"]
+        type_score = score["base"]
+
+        qpf = get_noaa_precip_for_spec(spec)
+        precip_str = format_precip_str(qpf)
+
+        flow_str = f"{last_val:.0f}" if last_val is not None else "—"
+        t_range = spec.get("T", "")
+        ts_display = ts.astimezone().strftime("%m-%d %H:%M") if ts else ""
+        notes = spec.get("N", "")
+
+        st.markdown(
+            f"""
+            <div style="padding:4px 0 2px 0;">
+                <span style="font-size:15px; font-weight:600;">{name}</span><br>
+                <span style="font-size:13px;">
+                    Flow: <b>{flow_str}</b> {t_range}
+                    &nbsp;|&nbsp;
+                    <span style="color:{cond_color};">Condition: {cond_text}</span>
+                    &nbsp;|&nbsp;
+                    <span style="color:{trend_color};">{arrow} {trend_text}</span>
+                    &nbsp;|&nbsp;
+                    Score: <b>{total_score:.2f}</b>
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        precip_part = f" &nbsp;|&nbsp; Precip: {precip_str}" if precip_str else ""
+
+        st.markdown(
+            f"""
+            <div style="font-size:11px; color:#DDDDDD; margin-top:-2px; margin-bottom:6px;">
+                Flow: {flow_score:.1f} |
+                Trend: {trend_score:.2f} |
+                Weather: {weather_score:.2f} |
+                Type: {type_score:.2f} |
+                Total: {total_score:.2f}<br>
+                Last 24h: {arrow} ({pct_change:+.1f}%) &nbsp;|&nbsp;
+                Storm Cycle: {storm_cycle}{precip_part} &nbsp;|&nbsp;
+                {notes} &nbsp;|&nbsp;
+                {ts_display} &nbsp;|&nbsp;
+                Confidence: {confidence}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # --- RENDER REGIONS SOUTH → NORTH, EACH COLLAPSIBLE (COLLAPSED BY DEFAULT) ---
+
+    ordered_regions = [
+        "NorCal",
+        "Southern Oregon Coast",
+        "Central Oregon Coast",
+        "Northern Oregon Coast",
+        "Washington Coast",
+        "Olympic Peninsula",
+    ]
+
+    for region_name in ordered_regions:
+        rivers = COASTAL_RIVER_SPECS.get(region_name, [])
+        if not rivers:
+            continue
+
+        with st.expander(region_name, expanded=False):
+            for spec in rivers:
+                render_river_row(spec)
