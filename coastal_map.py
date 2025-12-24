@@ -2,384 +2,182 @@ import streamlit as st
 import pydeck as pdk
 import pandas as pd
 
-# Handle Streamlit version compatibility for fragments
-if hasattr(st, "fragment"):
-    fragment = st.fragment
-elif hasattr(st, "experimental_fragment"):
-    fragment = st.experimental_fragment
-else:
-    def fragment(func):
-        return func
-
-# ============================================================
-# DATA TRANSFORMATION & CACHING
-# ============================================================
-
-@st.cache_data(show_spinner=False)
-def _get_master_dataframe(coastal_data):
+def render_coastal_map(data_dict, filters):
     """
-    Process raw coastal_data dictionary into a Pandas DataFrame.
-    Cached to prevent re-computation on every rerun.
+    Renders map using the unified data structure from dashboard_v2.
     """
-    rows = []
-
-    for region_name, entries in coastal_data.items():
+    all_rows = []
+    
+    # Diagnostics counters
+    total_rivers = 0
+    skipped_region = 0
+    skipped_status = 0
+    
+    # Track which statuses are being skipped to help debug
+    skipped_status_types = {}
+    
+    # Flatten the region dictionary into a list for the map
+    for region, entries in data_dict.items():
+        total_rivers += len(entries)
+        
+        # Respect Region Filters
+        # Note: filters["regions"] comes from dashboard_v2 sidebar
+        if region not in filters["regions"]:
+            skipped_region += len(entries)
+            continue
+            
         for e in entries:
-            spec = e.get("spec", {})
+            # Respect Status Filters
+            # e["cond_text"] is the status in dashboard_v2 (e.g., "in shape")
+            status_raw = e.get("cond_text", "no data")
             
-            # --------------------------------------------------------
-            # COORDINATE LOOKUP
-            # --------------------------------------------------------
-            lat = spec.get("Lat") or spec.get("lat")
-            lon = spec.get("Lon") or spec.get("lon")
+            # Check if this status is selected in filters
+            if status_raw not in filters["status"]:
+                skipped_status += 1
+                skipped_status_types[status_raw] = skipped_status_types.get(status_raw, 0) + 1
+                continue
+                
+            spec = e["spec"]
             
-            # Fallback coordinates
-            if lat is None or lon is None:
-                name_clean = spec.get("Name", "").lower()
-                if "smith" in name_clean: lat, lon = 41.9, -124.1
-                elif "klamath" in name_clean: lat, lon = 41.5, -124.0
-                elif "trinity" in name_clean: lat, lon = 41.1, -123.7
-                elif "mad" in name_clean: lat, lon = 40.9, -124.0
-                elif "eel" in name_clean: lat, lon = 40.5, -124.1
-                elif "van duzen" in name_clean: lat, lon = 40.5, -124.0
-                elif "mattole" in name_clean: lat, lon = 40.3, -124.3
-                elif "navarro" in name_clean: lat, lon = 39.2, -123.7
-                elif "garcia" in name_clean: lat, lon = 38.9, -123.7
-                elif "gualala" in name_clean: lat, lon = 38.8, -123.5
-                elif "russian" in name_clean: lat, lon = 38.4, -123.1
-                elif "chetco" in name_clean: lat, lon = 42.0, -124.2
-                elif "rogue" in name_clean: lat, lon = 42.4, -124.4
-                elif "elk" in name_clean: lat, lon = 42.7, -124.5
-                elif "sixes" in name_clean: lat, lon = 42.8, -124.5
-                elif "coquille" in name_clean: lat, lon = 43.1, -124.4
-                elif "coos" in name_clean: lat, lon = 43.3, -124.2
-                elif "umpqua" in name_clean: lat, lon = 43.7, -124.1
-                elif "siuslaw" in name_clean: lat, lon = 44.0, -124.1
-                elif "alsea" in name_clean: lat, lon = 44.4, -124.0
-                elif "yaquina" in name_clean: lat, lon = 44.6, -124.0
-                elif "siletz" in name_clean: lat, lon = 44.9, -124.0
-                elif "nestucca" in name_clean: lat, lon = 45.2, -123.9
-                elif "trask" in name_clean: lat, lon = 45.4, -123.8
-                elif "wilson" in name_clean: lat, lon = 45.5, -123.8
-                elif "kilchis" in name_clean: lat, lon = 45.5, -123.8
-                elif "nehalem" in name_clean: lat, lon = 45.7, -123.9
-                elif "bogachiel" in name_clean: lat, lon = 47.9, -124.5
-                elif "calawah" in name_clean: lat, lon = 47.9, -124.4
-                elif "sol duc" in name_clean: lat, lon = 48.0, -124.5
-                elif "hoh" in name_clean: lat, lon = 47.8, -124.2
-                elif "queets" in name_clean: lat, lon = 47.5, -124.3
-                elif "quinault" in name_clean: lat, lon = 47.3, -124.2
-                elif "humptulips" in name_clean: lat, lon = 47.2, -124.0
-                elif "chehalis" in name_clean: lat, lon = 46.9, -123.8
-                elif "satsop" in name_clean: lat, lon = 47.0, -123.5
-                elif "wynoochee" in name_clean: lat, lon = 47.0, -123.6
-                elif "willapa" in name_clean: lat, lon = 46.7, -123.8
-                elif "naselle" in name_clean: lat, lon = 46.4, -123.8
-                else: continue # Skip if no coords found
+            # Skip if no coordinates (shouldn't happen with updated specs)
+            if "lat" not in spec or "lon" not in spec:
+                continue
 
-            # --------------------------------------------------------
-            # EXTRACT DATA
-            # --------------------------------------------------------
-            name = spec.get("Name", "Unknown")
-            score = e.get("score", 0.0)
-            cond_text = e.get("cond_text", "no data")
-            trend_text = e.get("trend_text", "")
-            arrow = e.get("arrow", "")
-            pct_change = e.get("pct_change")
-            last_val = e.get("last_val")
-            time_str = e.get("time_str", "")
-            cond_color = e.get("cond_color", "#CCCCCC")
+            # ------------------------------------------------
+            # COLOR LOGIC (Mapped to dashboard_v2 statuses)
+            # ------------------------------------------------
+            stat = status_raw.lower()
             
-            window_status = e.get("window", "—")
-            storm_cycle_raw = e.get("storm_cycle", ("Unknown", "❔", "#E0E0E0"))
-            if isinstance(storm_cycle_raw, tuple) and len(storm_cycle_raw) == 3:
-                storm_label, storm_emoji, storm_color = storm_cycle_raw
+            # RGBA Colors
+            if "in shape" in stat: 
+                color = [0, 255, 0, 200]       # Green
+                radius = 6000
+                display_status = "Prime / In Shape"
+            elif "slightly high" in stat or "likely high" in stat: 
+                color = [220, 220, 0, 200]     # Yellow/Gold
+                radius = 4500
+                display_status = "Slightly High"
+            elif "low" in stat: 
+                color = [255, 140, 0, 200]     # Orange
+                radius = 4500
+                display_status = "Low"
+            elif "blown out" in stat: 
+                color = [200, 0, 0, 200]       # Red
+                radius = 3000
+                display_status = "Blown Out"
+            elif "too low" in stat: 
+                color = [50, 50, 200, 150]     # Blue
+                radius = 2000
+                display_status = "Too Low"
+            else: 
+                color = [150, 150, 150, 150]   # Grey
+                radius = 2000
+                display_status = status_raw.title()
+            
+            # ------------------------------------------------
+            # TOOLTIP CONTENT
+            # ------------------------------------------------
+            trend_arrow = "➡️"
+            trend_txt = e.get("trend_text", "")
+            if "↑" in trend_txt: trend_arrow = "↗️"
+            if "↓" in trend_txt: trend_arrow = "↘️"
+            
+            # Formatting the Value
+            val = e.get('last_val')
+            if e.get("is_modeled"):
+                val_str = "Est."
             else:
-                storm_label, storm_emoji, storm_color = "Unknown", "❔", "#E0E0E0"
+                val_str = f"{val:.0f}" if val is not None else "?"
+            
+            # Unit lookup
+            unit = "cfs"
+            if "ft" in spec.get("T", ""): unit = "ft"
 
-            source = e.get("source", "none")
-            confidence = e.get("confidence", "none")
-            hydro_insight = e.get("hydro_insight", "")
-
-            # --------------------------------------------------------
-            # CALCULATE SCORES
-            # --------------------------------------------------------
-            if last_val is not None and source != "none" and confidence != "none":
-                confidence_level = "high"
-                confidence_score = 1.0
-            elif source != "none" or confidence != "none":
-                confidence_level = "medium"
-                confidence_score = 0.5
-            else:
-                confidence_level = "low"
-                confidence_score = 0.2
-
-            ws = str(window_status).lower()
-            if "open" in ws: window_score = 1.0
-            elif "soon" in ws or "opening" in ws or "pending" in ws: window_score = 0.7
-            elif "closed" in ws or "no window" in ws: window_score = 0.1
-            else: window_score = 0.4
-
-            sl = str(storm_label).lower()
-            if "rising" in sl: storm_score = 0.8
-            elif "peak" in sl: storm_score = 1.0
-            elif "drop" in sl or "recession" in sl: storm_score = 0.5
-            elif "post" in sl: storm_score = 0.3
-            else: storm_score = 0.4
-
-            cond = cond_text.lower()
-            if cond == "in shape": cond_score = 1.0
-            elif cond == "low": cond_score = 0.7
-            elif cond == "slightly high": cond_score = 0.5
-            elif cond == "blown out": cond_score = 0.1
-            elif cond in ["no data", "below legal", "too low"]: cond_score = 0.2
-            else: cond_score = 0.4
-
-            # --------------------------------------------------------
-            # TOOLTIP CONSTRUCTION (HTML)
-            # --------------------------------------------------------
-            pct_str = f"{pct_change:+.1f}%" if pct_change is not None else "—"
-            flow_str = f"{last_val:.0f}" if last_val is not None else "—"
-
-            # Added HTML bolding and line breaks
-            tooltip = (
-                f"<b>{name}</b> <span style='color:#ccc; font-size:0.9em;'>({region_name})</span><br/>"
-                f"<b>Status:</b> {cond_text}<br/>"
-                f"<b>Flow/Stage:</b> {flow_str}<br/>"
-                f"<b>Trend:</b> {arrow} {pct_str} • {trend_text}<br/>"
-                f"<b>Storm:</b> {storm_emoji} {storm_label}<br/>"
-                f"<b>Window:</b> {window_status}<br/>"
-                f"<b>Confidence:</b> {confidence_level}<br/>"
-                f"<b>Updated:</b> {time_str}<br/>"
-                f"<div style='margin-top:4px; font-style:italic;'>{hydro_insight}</div>"
-            )
-
-            rows.append({
-                "name": name,
-                "region": region_name,
-                "lat": float(lat),
-                "lon": float(lon),
-                "score": float(score),
-                "cond_text": cond_text,
-                "cond_color": cond_color,
-                "cond_score": cond_score,
-                "trend_text": trend_text,
-                "arrow": arrow,
-                "pct_change": pct_change,
-                "last_val": last_val,
-                "time_str": time_str,
-                "window_status": window_status,
-                "window_score": window_score,
-                "storm_label": storm_label,
-                "storm_emoji": storm_emoji,
-                "storm_color": storm_color,
-                "storm_score": storm_score,
-                "source": source,
-                "confidence": confidence,
-                "confidence_level": confidence_level,
-                "confidence_score": confidence_score,
-                "hydro_insight": hydro_insight,
-                "tooltip": tooltip,
+            tooltip_html = f"""
+                <div style='font-family: sans-serif; padding: 4px;'>
+                    <b style='font-size: 1.1em;'>{spec['Name']}</b><br/>
+                    <span style='color: #ccc;'>{region}</span><hr style='margin: 4px 0; border-color: #555;'/>
+                    <b>Flow:</b> {val_str} {unit}<br/>
+                    <b>Status:</b> {display_status}<br/>
+                    <b>Trend:</b> {trend_txt} {trend_arrow}<br/>
+                    <i style='font-size: 0.9em; color: #aaa;'>Ideal: {spec['T']}</i>
+                </div>
+            """
+            
+            all_rows.append({
+                "name": spec["Name"],
+                "lat": spec["lat"],
+                "lon": spec["lon"],
+                "color": color,
+                "radius": radius,
+                "tooltip": tooltip_html
             })
 
-    if not rows:
-        return pd.DataFrame()
+    # ------------------------------------------------
+    # EMPTY STATE HANDLING
+    # ------------------------------------------------
+    if not all_rows:
+        if total_rivers == 0:
+            st.error("⚠️ No data loaded.")
+        else:
+            st.info(f"ℹ️ No rivers match the current filters.")
+            
+        return
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(all_rows)
 
-
-def _apply_filters_to_df(df, filters):
-    """
-    Fast boolean masking instead of row iteration.
-    """
-    if df.empty:
-        return df
-
-    mask_cond = pd.Series(False, index=df.index)
-    if filters.get("in_shape", True): mask_cond |= (df["cond_text"] == "in shape")
-    if filters.get("low", True): mask_cond |= (df["cond_text"] == "low")
-    if filters.get("slightly_high", True): mask_cond |= (df["cond_text"] == "slightly high")
-    if filters.get("blown_out", True): mask_cond |= (df["cond_text"] == "blown out")
-    if filters.get("below_legal", True): mask_cond |= (df["cond_text"] == "below legal")
-    if filters.get("low", True): mask_cond |= (df["cond_text"] == "too low")
-    if filters.get("no_data", True): mask_cond |= (df["cond_text"] == "no data")
-
-    mask_trend = pd.Series(False, index=df.index)
-    if filters.get("rising", True): mask_trend |= df["trend_text"].str.contains("↑", na=False)
-    if filters.get("dropping", True): mask_trend |= df["trend_text"].str.contains("↓", na=False)
-    if filters.get("stable", True): mask_trend |= df["trend_text"].str.contains("↔", na=False)
-
-    return df[mask_cond & mask_trend]
-
-
-# ============================================================
-# PYDECK LAYER BUILDERS
-# ============================================================
-
-def _build_marker_layer(df, show_estimated=True):
-    if df.empty: return None
-    
-    if not show_estimated:
-        df = df[df["confidence_level"] == "high"]
-
-    def hex_to_rgb(h):
-        h = h.lstrip('#')
-        return [int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)]
-
-    layer_df = df.copy()
-    layer_df['color_rgb'] = layer_df['cond_color'].apply(hex_to_rgb)
-    
-    s_min, s_max = 4, 18
-    sc_min, sc_max = layer_df['score'].min(), layer_df['score'].max()
-    if sc_max == sc_min: sc_max += 1
-    
-    layer_df['size'] = layer_df['score'].apply(
-        lambda s: s_min + (s_max - s_min) * ((s - sc_min) / (sc_max - sc_min))
-    )
-
-    return pdk.Layer(
+    # ------------------------------------------------
+    # PYDECK LAYER CONFIG
+    # ------------------------------------------------
+    layer = pdk.Layer(
         "ScatterplotLayer",
-        data=layer_df,
+        data=df,
         get_position=["lon", "lat"],
-        get_radius="size * 2000",
-        get_fill_color="color_rgb",
+        get_color="color",
+        get_radius="radius",
         pickable=True,
         opacity=0.8,
         stroked=True,
+        filled=True,
+        radius_scale=1,
+        radius_min_pixels=5,
+        radius_max_pixels=25,
         get_line_color=[0, 0, 0],
         get_line_width=100,
     )
 
+    # Center map based on data
+    if not df.empty:
+        lat_center = df["lat"].mean()
+        lon_center = df["lon"].mean()
+        zoom = 5.5
+    else:
+        lat_center = 45.0
+        lon_center = -123.0
+        zoom = 5
 
-def _build_heatmap_layer(df, mode, show_estimated=True):
-    if df.empty: return None
-
-    if not show_estimated:
-        df = df[df["confidence_level"] == "high"]
-
-    layer_df = df.copy()
-
-    col_map = {
-        "Score": "score",
-        "Window": "window_score",
-        "Confidence": "confidence_score",
-        "Storm-cycle": "storm_score"
-    }
-    col = col_map.get(mode, "score")
-    
-    layer_df["weight"] = layer_df[col]
-
-    return pdk.Layer(
-        "HeatmapLayer",
-        data=layer_df,
-        get_position=["lon", "lat"],
-        get_weight="weight",
-        radius_pixels=80,
-        intensity=1,
-        threshold=0.05,
-    )
-
-
-def _compute_initial_view(df):
-    if df.empty:
-        return pdk.ViewState(latitude=44.0, longitude=-124.0, zoom=5, pitch=0)
-
-    lat_center = df["lat"].mean()
-    lon_center = df["lon"].mean()
-
-    return pdk.ViewState(
-        latitude=float(lat_center),
-        longitude=float(lon_center),
-        zoom=6,
+    view_state = pdk.ViewState(
+        latitude=lat_center,
+        longitude=lon_center,
+        zoom=zoom,
         pitch=0,
     )
 
-
-def _render_legend():
-    st.markdown(
-        """
-        <div style="font-size:0.80rem; line-height:1.4; margin-bottom:8px;">
-            <b>Legend</b><br>
-            <span style="color:#C8E6C9;">●</span> In shape &nbsp;
-            <span style="color:#FFEB3B;">●</span> Low &nbsp;
-            <span style="color:#FFCC80;">●</span> Slightly high &nbsp;
-            <span style="color:#FFCDD2;">●</span> Blown out &nbsp;
-            <span style="color:#E0E0E0;">●</span> No data<br>
-            📡 Measured &nbsp; 📏 Stage-only &nbsp; 🧪 Estimated &nbsp; 🕒 Stale
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ============================================================
-# MAIN ENTRY POINT
-# ============================================================
-
-@fragment
-def render_coastal_map(coastal_data, filters):
-    st.subheader("🗺️ Coastal Map View")
-
-    master_df = _get_master_dataframe(coastal_data)
-
-    if master_df.empty:
-        st.warning("No map data available.")
-        return
-
-    df = _apply_filters_to_df(master_df, filters)
-
-    if df.empty:
-        st.info("No rivers match the current filters.")
-        return
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: show_markers = st.checkbox("Show markers", True, key="map_mark")
-    with c2: show_heatmap = st.checkbox("Show heat map", False, key="map_heat")
-    with c3: show_estimated = st.checkbox("Include estimated", True, key="map_est")
-    with c4: heat_mode = st.selectbox("Heat map mode", ["Score", "Window", "Confidence", "Storm-cycle"], key="map_mode")
-
-    _render_legend()
-
-    layers = []
-    
-    if show_heatmap:
-        l = _build_heatmap_layer(df, heat_mode, show_estimated)
-        if l: layers.append(l)
-        
-    if show_markers:
-        l = _build_marker_layer(df, show_estimated)
-        if l: layers.append(l)
-
-    if not layers:
-        st.write("Enable markers and/or heat map to see data.")
-        return
-
-    lat_mean = df["lat"].mean()
-    lon_mean = df["lon"].mean()
-    view_state = pdk.ViewState(latitude=lat_mean, longitude=lon_mean, zoom=6, pitch=0)
-
-    # UPDATED TOOLTIP STYLE + MAP DIMENSIONS
-    deck = pdk.Deck(
-        map_style=pdk.map_styles.CARTO_LIGHT,  
+    # ------------------------------------------------
+    # RENDER DECK
+    # ------------------------------------------------
+    st.pydeck_chart(pdk.Deck(
+        map_style=pdk.map_styles.CARTO_LIGHT,
         initial_view_state=view_state,
-        layers=layers,
+        layers=[layer],
         tooltip={
             "html": "{tooltip}",
             "style": {
-                "backgroundColor": "rgba(0, 0, 0, 0.85)",
-                "color": "white",
-                "fontSize": "13px",
-                "padding": "10px",
-                "borderRadius": "4px",
-                "zIndex": "1000",
-                "maxWidth": "250px", # Force wrap
-                "whiteSpace": "normal",
-                "lineHeight": "1.4"
+                "backgroundColor": "#1e1e1e",
+                "color": "#ffffff",
+                "borderRadius": "5px",
+                "border": "1px solid #333",
+                "zIndex": "1000"
             }
-        },
-    )
-    
-    # Restrict width using columns and increase height
-    _, map_col, _ = st.columns([1, 6, 1])
-    with map_col:
-        st.pydeck_chart(deck, height=750)
+        }
+    ))
